@@ -1,0 +1,20 @@
+---
+description: Keep every change small, check it before editing, and build it test-first
+alwaysApply: true
+---
+
+# Keep it simple
+
+Solve the request with the smallest change that works. Do not add layers, options, abstractions, or files the current task does not need.
+
+Before editing, read the code you will touch and restate the change in one sentence. If that sentence needs a new framework, a new pattern, or a "for later" hook, cut it back and do the direct thing.
+
+Build every behavior with the `tdd` skill: one failing test, then only enough code to pass it, then the next slice. No production code without a failing test first.
+
+After the change, re-read the diff and run the new test. Leave it only when the test fails first, passes after, and the diff contains nothing extra.
+
+```text
+Request: remember the last opened note
+Do:     one test for "reopen shows the last note", then the few lines that store and read it
+Skip:   a storage interface, a plugin system, and settings for future backends
+```
