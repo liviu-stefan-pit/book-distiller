@@ -1,0 +1,31 @@
+{
+  "name": "book-distiller",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "build": "electron-vite build",
+    "start": "electron-vite build && electron .",
+    "dev": "electron-vite dev",
+    "test": "electron-vite build && playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^26.6.6",
+    "@types/pdfkit": "^0.17.7",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^38.4.0",
+    "electron-vite": "^6.0.0",
+    "pdfkit": "^0.20.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.4.299",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}
