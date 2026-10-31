@@ -194,6 +194,209 @@ function gapDrafts(start: number, end: number): Draft[] {
   }));
 }
 
+const chapterHeading = /^chapter\s+\d+/i;
+const indexLetter = /^[A-Z](?:\s*,\s*[A-Z])?$/;
+
+function isChapterHeading(title: string): boolean {
+  return chapterHeading.test(title.trim());
+}
+
+function isIndexLetter(title: string): boolean {
+  return indexLetter.test(title.trim());
+}
+
+function findChapters(nodes: HeadingNode[]): HeadingNode[] {
+  const chapters: HeadingNode[] = [];
+  const walk = (list: HeadingNode[]): void => {
+    for (const node of list) {
+      if (isChapterHeading(node.title)) {
+        chapters.push(node);
+      } else {
+        walk(node.children);
+      }
+    }
+  };
+  walk(nodes);
+  return chapters.sort((left, right) => left.page - right.page);
+}
+
+function hasChapter(node: HeadingNode): boolean {
+  return node.children.some((child) => isChapterHeading(child.title) || hasChapter(child));
+}
+
+function reachesBeyond(node: HeadingNode): boolean {
+  return node.children.some((child) => child.page > node.page + headingPageLimit);
+}
+
+function collectMarks(nodes: HeadingNode[]): Array<{ title: string; page: number }> {
+  const marks: Array<{ title: string; page: number }> = [];
+  const visit = (node: HeadingNode): void => {
+    if (isChapterHeading(node.title)) {
+      return;
+    }
+    if (!isIndexLetter(node.title)) {
+      marks.push({ title: node.title, page: node.page });
+    }
+    if (hasChapter(node) || reachesBeyond(node)) {
+      for (const child of node.children) {
+        visit(child);
+      }
+    }
+  };
+  for (const node of nodes) {
+    visit(node);
+  }
+  marks.sort((left, right) => left.page - right.page);
+  const unique: Array<{ title: string; page: number }> = [];
+  for (const mark of marks) {
+    const previous = unique[unique.length - 1];
+    if (!previous || previous.page !== mark.page) {
+      unique.push(mark);
+    }
+  }
+  return unique;
+}
+
+function nextOutsidePage(nodes: HeadingNode[], chapter: HeadingNode): number | null {
+  let next: number | null = null;
+  const consider = (page: number): void => {
+    if (page > chapter.page && (next === null || page < next)) {
+      next = page;
+    }
+  };
+  const walk = (list: HeadingNode[]): void => {
+    for (const node of list) {
+      if (node === chapter) {
+        continue;
+      }
+      consider(node.page);
+      walk(node.children);
+    }
+  };
+  walk(nodes);
+  return next;
+}
+
+function chapterDrafts(chapter: HeadingNode, end: number): Draft[] {
+  const children = chapter.children
+    .filter((child) => child.page >= chapter.page && child.page <= end)
+    .sort((left, right) => left.page - right.page);
+  const sections: HeadingNode[] = [];
+  for (const child of children) {
+    const previous = sections[sections.length - 1];
+    if (!previous || child.page > previous.page) {
+      sections.push(child);
+    }
+  }
+  if (sections.length === 0) {
+    return chunk(chapter.title, chapter.page, end, true);
+  }
+  const drafts: Draft[] = [];
+  for (let index = 0; index < sections.length; index += 1) {
+    const section = sections[index];
+    const sectionEnd = index + 1 < sections.length ? sections[index + 1].page - 1 : end;
+    const sectionStart = index === 0 ? chapter.page : section.page;
+    if (sectionEnd >= sectionStart) {
+      drafts.push(...chunk(section.title, sectionStart, sectionEnd, true));
+    }
+  }
+  return drafts;
+}
+
+function pageCovered(spans: Array<{ start: number; end: number }>, page: number): boolean {
+  return spans.some((span) => page >= span.start && page <= span.end);
+}
+
+const outsideFurniture = [
+  ...frontMatterTitles,
+  'cover',
+  'copyright',
+  'packt',
+  'contributors',
+  'contents',
+  'introduction',
+  'about the',
+];
+
+function isOutsideFurniture(title: string): boolean {
+  if (title.startsWith('Pages ')) {
+    return true;
+  }
+  const normalized = title.trim().toLowerCase();
+  return outsideFurniture.some((name) => {
+    if (!normalized.startsWith(name)) {
+      return false;
+    }
+    const next = normalized.charAt(name.length);
+    return next === '' || !/\p{L}/u.test(next);
+  });
+}
+
+function outsideGap(
+  marks: Array<{ title: string; page: number }>,
+  gapStart: number,
+  gapEnd: number,
+): Draft[] {
+  const points = marks.filter((mark) => mark.page >= gapStart && mark.page <= gapEnd);
+  if (points.length === 0 || points[0].page > gapStart) {
+    const titleEnd = points.length === 0 ? gapEnd : points[0].page - 1;
+    points.unshift({
+      title: `Pages ${gapStart}\u2013${titleEnd}`,
+      page: gapStart,
+    });
+  }
+  const drafts: Draft[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const start = points[index].page;
+    const end = index + 1 < points.length ? points[index + 1].page - 1 : gapEnd;
+    if (end >= start) {
+      drafts.push(...chunk(points[index].title, start, end, !isOutsideFurniture(points[index].title)));
+    }
+  }
+  return drafts;
+}
+
+function outsideDrafts(
+  marks: Array<{ title: string; page: number }>,
+  spans: Array<{ start: number; end: number }>,
+  pageCount: number,
+): Draft[] {
+  const drafts: Draft[] = [];
+  let page = 1;
+  while (page <= pageCount) {
+    if (pageCovered(spans, page)) {
+      page += 1;
+      continue;
+    }
+    let gapEnd = page;
+    while (gapEnd < pageCount && !pageCovered(spans, gapEnd + 1)) {
+      gapEnd += 1;
+    }
+    drafts.push(...outsideGap(marks, page, gapEnd));
+    page = gapEnd + 1;
+  }
+  return drafts;
+}
+
+function chapterBookDrafts(nodes: HeadingNode[], chapters: HeadingNode[], pageCount: number): Draft[] {
+  const spans = chapters
+    .map((chapter) => {
+      const next = nextOutsidePage(nodes, chapter);
+      return { chapter, start: chapter.page, end: next === null ? pageCount : next - 1 };
+    })
+    .filter((span) => span.end >= span.start);
+  const drafts = [
+    ...outsideDrafts(
+      collectMarks(nodes),
+      spans.map((span) => ({ start: span.start, end: span.end })),
+      pageCount,
+    ),
+    ...spans.flatMap((span) => chapterDrafts(span.chapter, span.end)),
+  ];
+  drafts.sort((left, right) => left.pageStart - right.pageStart || left.pageEnd - right.pageEnd);
+  return drafts;
+}
+
 function outlineDrafts(nodes: HeadingNode[], pageCount: number): Draft[] {
   const drafts: Draft[] = [];
   let cursor = 1;
@@ -220,7 +423,12 @@ export async function slicePdf(bytes: Uint8Array): Promise<Slice[]> {
     if (!outline || outline.length === 0) {
       return withIds(windowDrafts(await pageTexts(pdf)));
     }
-    return withIds(outlineDrafts(await readHeadings(pdf, outline), pdf.numPages));
+    const nodes = await readHeadings(pdf, outline);
+    const chapters = findChapters(nodes);
+    if (chapters.length === 0) {
+      return withIds(outlineDrafts(nodes, pdf.numPages));
+    }
+    return withIds(chapterBookDrafts(nodes, chapters, pdf.numPages));
   } finally {
     await task.destroy();
   }

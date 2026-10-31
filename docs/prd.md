@@ -14,12 +14,12 @@ A local Electron app. The reader drops one PDF, chooses an output folder, saves 
 
 ## Terms
 
-- **Slice.** A heading-bounded run of pages, at most 6, or a 4-page window when the PDF has no outline. One slice becomes one board.
+- **Slice.** A heading-bounded run of pages, at most 6, or a 4-page window when the PDF has no outline. When the outline has a bookmark titled Chapter plus a number, the cuts follow that chapter’s own sections. One slice becomes one board.
 - **Board.** The kept technical content of one slice: points, book examples, and verbatim code, each with a PDF page.
 - **Must remember.** A load-bearing rule. Short.
 - **Mechanics.** Every other technical point in the slice.
 - **Useful later.** A niche case the reader does not need today.
-- **Listing.** A run of lines the PDF draws in a monospace font.
+- **Listing.** A run of lines the PDF draws in a monospace font. A one-line run that is only a URL, or only digits, is not a listing.
 - **Book folder.** The folder named after one book, inside the output folder. It is the record. When the output folder is already that PDF’s book, the files stay in the output folder.
 - **Manifest.** The index of that folder. A slice is done because its board file validates, and the app can rewrite the manifest from the board files and the PDF.
 - **Note.** The markdown rendering of one board, written when that board is accepted.
@@ -38,55 +38,56 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 6. As a reader, I want preface, foreword, acknowledgments, about the author, table of contents, bibliography, glossary, index, and appendix to start unchecked, so that front matter is skipped unless I opt in.
 7. As a reader, I want to toggle slices and leave the page boundaries as the slicer set them, so that I choose what to spend on and the app chooses the cuts.
 8. As a reader, I want Confirm to stay off when every slice is unchecked, so that I cannot start an empty run.
-9. As a reader, I want each outline heading of 6 pages or fewer to be one slice, so that a model has room to keep every technical detail.
-10. As a reader, I want a longer heading to split on its child headings and then into chunks of 6 pages with a shorter last chunk, so that no board covers more than 6 pages.
-11. As a reader, I want pages that sit in no outline entry to appear as “Pages a–b” slices that start unchecked, so that stray pages are visible and unspent.
-12. As a reader, I want a PDF with no outline to become tiled 4-page windows, last window shorter, so that a book without bookmarks still slices.
-13. As a reader, I want a window whose text begins with an English front-matter title to start unchecked, so that an outline-less preface is skipped the same way.
-14. As a reader, I want to choose an output folder, and have a missing folder created, so that each book is saved in a folder named after the book.
-15. As a reader, I want a folder that is already a book to open in the viewer, and any other folder to be the output folder, so that I can keep many books in one place. An unreadable book folder is refused.
-16. As a reader, I want to paste a Cursor key and see the models that key can use, so that I pick the model for the run.
-17. As a reader, I want a key stored only after Cursor returns that catalog, so that a bad key is never saved.
-18. As a reader, I want the key in Windows Credential Manager, so that other Windows accounts on the PC cannot read it.
-19. As a reader, I want Replace key and Forget key, so that I can change or remove the credential.
-20. As a reader, I want the window to receive model names and boards, and never the key, so that the page cannot leak the credential.
-21. As a reader, I want Start to stay off until the key is saved, a model is chosen, the PDF is accepted, and the folder is set, so that a run cannot start half-configured.
-22. As a reader, I want one model for every slice in the run, so that the book is extracted with a single choice.
-23. As a reader, I want slices to run one at a time, so that I can read the first board while the next one is written.
-24. As a reader, I want the first accepted board to open immediately, so that I start studying without waiting for the rest of the book.
-25. As a reader, I want each slice shown as queued, writing, done, or failed, so that I can see the run.
-26. As a reader, I want a rejected board tried once more, then failed with a short reason, so that a bad reply does not loop.
-27. As a reader, I want Cancel to stop the queue, so that I can halt a run.
-28. As a reader, I want a slice with no accepted board to stay unfinished, so that closing the app or a failed call can be continued later.
-29. As a reader, I want a done slice to open while another slice is writing, so that I can move around the finished part of the book.
-30. As a reader, I want every technical rule, number, warning, and mechanism kept, and narrative fluff left out, so that the board is complete and readable.
-31. As a reader, I want the book’s own example kept on the point it illustrates, with its page, so that I still have the concrete case.
-32. As a reader, I want each point in exactly one kind — must remember, mechanics, or useful later — so that the load-bearing rules stay short and nothing technical is dropped to make them short.
-33. As a reader, I want each code listing verbatim, with its page, language, and a short note on why lines matter, so that I can study the book’s code.
-34. As a reader, I want the viewer to show must remember, then mechanics, then useful later, then code, so that the board always has the same shape.
-35. As a reader, I want a page citation to open that PDF page, fitted to width, with previous and next staying inside the slice, so that I can check a claim in one click.
-36. As a reader, I want a slice with no technical content to become a valid empty board, so that the queue moves on and the viewer says those pages had no technical content.
-37. As a reader, I want a board file and a note on disk as soon as the board is accepted, so that a crash keeps what I already paid for.
-38. As a reader, I want an existing valid board skipped on the next run, so that I do not pay twice.
-39. As a reader, I want to open a book folder from the launchpad and see the viewer without a model call, so that browsing past work is free.
-40. As a reader, I want Continue, when the queue is idle, to run every checked slice that is missing or failed, so that I finish the book on purpose.
-41. As a reader, I want checkboxes on slices that are not done, so that I can skip a remaining slice before Continue.
-42. As a reader, I want Redo, when the queue is idle, to keep the current board up until the new one validates, so that a failed redo leaves the old board.
-43. As a reader, I want the drawer to say the PDF is missing when the stored path is gone, so that the boards still open.
-44. As a reader, I want the UI in English, on one dark appearance (near-black canvas, thin borders, short motion), so that the app stays a simple reading tool.
-45. As a reader, I want to run the app from this repo on Windows, so that I can use it before any installer exists.
+9. As a reader, I want each outline heading of 6 pages or fewer to be one slice when the book has no Chapter-numbered bookmark, so that a model has room to keep every technical detail.
+10. As a reader, I want a longer heading in a book with no Chapter-numbered bookmark to split on its child headings and then into chunks of 6 pages with a shorter last chunk, so that no board covers more than 6 pages.
+11. As a reader, I want a book whose outline contains Chapter-numbered bookmarks to be cut on each chapter’s own sections, wherever those bookmarks sit, so that a part title or a grandchild heading does not become the slice. A section longer than 6 pages splits into 6-page chunks that keep that section’s title. Pages before the first section join that section. Cover, copyright, contents, contributors, a Packt page, introduction, about the author or reviewer, the index and its letter bookmarks, and the other front-matter titles start unchecked. Another heading outside a chapter starts checked.
+12. As a reader, I want pages that sit in no outline entry to appear as “Pages a–b” slices that start unchecked, so that stray pages are visible and unspent.
+13. As a reader, I want a PDF with no outline to become tiled 4-page windows, last window shorter, so that a book without bookmarks still slices.
+14. As a reader, I want a window whose text begins with an English front-matter title to start unchecked, so that an outline-less preface is skipped the same way.
+15. As a reader, I want to choose an output folder, and have a missing folder created, so that each book is saved in a folder named after the book.
+16. As a reader, I want a folder that is already a book to open in the viewer, and any other folder to be the output folder, so that I can keep many books in one place. An unreadable book folder is refused.
+17. As a reader, I want to paste a Cursor key and see the models that key can use, so that I pick the model for the run.
+18. As a reader, I want a key stored only after Cursor returns that catalog, so that a bad key is never saved.
+19. As a reader, I want the key in Windows Credential Manager, so that other Windows accounts on the PC cannot read it.
+20. As a reader, I want Replace key and Forget key, so that I can change or remove the credential.
+21. As a reader, I want the window to receive model names and boards, and never the key, so that the page cannot leak the credential.
+22. As a reader, I want Start to stay off until the key is saved, a model is chosen, the PDF is accepted, and the folder is set, so that a run cannot start half-configured.
+23. As a reader, I want one model for every slice in the run, so that the book is extracted with a single choice.
+24. As a reader, I want slices to run one at a time, so that I can read the first board while the next one is written.
+25. As a reader, I want the first accepted board to open immediately, so that I start studying without waiting for the rest of the book.
+26. As a reader, I want each slice shown as queued, writing, done, or failed, so that I can see the run.
+27. As a reader, I want a rejected board tried once more, then failed with a short reason, so that a bad reply does not loop.
+28. As a reader, I want Cancel to stop the queue, so that I can halt a run.
+29. As a reader, I want a slice with no accepted board to stay unfinished, so that closing the app or a failed call can be continued later.
+30. As a reader, I want a done slice to open while another slice is writing, so that I can move around the finished part of the book.
+31. As a reader, I want every technical rule, number, warning, and mechanism kept, and narrative fluff left out, so that the board is complete and readable.
+32. As a reader, I want the book’s own example kept on the point it illustrates, with its page, so that I still have the concrete case.
+33. As a reader, I want each point in exactly one kind — must remember, mechanics, or useful later — so that the load-bearing rules stay short and nothing technical is dropped to make them short.
+34. As a reader, I want each code listing verbatim, with its page, language, and a short note on why lines matter, so that I can study the book’s code.
+35. As a reader, I want the viewer to show must remember, then mechanics, then useful later, then code, so that the board always has the same shape.
+36. As a reader, I want a page citation to open that PDF page, fitted to width, with previous and next staying inside the slice, so that I can check a claim in one click.
+37. As a reader, I want a slice with no technical content to become a valid empty board, so that the queue moves on and the viewer says those pages had no technical content.
+38. As a reader, I want a board file and a note on disk as soon as the board is accepted, so that a crash keeps what I already paid for.
+39. As a reader, I want an existing valid board skipped on the next run, so that I do not pay twice.
+40. As a reader, I want to open a book folder from the launchpad and see the viewer without a model call, so that browsing past work is free.
+41. As a reader, I want Continue, when the queue is idle, to run every checked slice that is missing or failed, so that I finish the book on purpose.
+42. As a reader, I want checkboxes on slices that are not done, so that I can skip a remaining slice before Continue.
+43. As a reader, I want Redo, when the queue is idle, to keep the current board up until the new one validates, so that a failed redo leaves the old board.
+44. As a reader, I want the drawer to say the PDF is missing when the stored path is gone, so that the boards still open.
+45. As a reader, I want the UI in English, on one dark appearance (near-black canvas, thin borders, short motion), so that the app stays a simple reading tool.
+46. As a reader, I want to run the app from this repo on Windows, so that I can use it before any installer exists.
 
 ## Implementation Decisions
 
 - The app is one Electron program, TypeScript. Electron’s main process reads the PDF, stores the key, and calls Cursor. The window is a React page with one stylesheet, English, on a solid near-black surface.
 - v1 runs on Windows. It is started from this repo with Node. A packaged executable waits.
-- The Cursor SDK is the model caller. Auth is a Cursor API key. Inference goes through Cursor’s hosted models. The model list is the catalog for that key. One model applies to the whole run. The last model and the last output folder live in ordinary app settings.
+- The Cursor SDK is the model caller. Auth is a Cursor API key. Inference goes through Cursor’s hosted models. The model list is the catalog for that key. One model applies to the whole run. Each prompt is sent with no tools, so the model answers in text. The last model and the last output folder live in ordinary app settings.
 - The key is stored in Windows Credential Manager, tied to the Windows login. Save asks Cursor for the catalog first. Failure stores nothing and shows the error. After a successful save the field is write-only. Any program running as the same Windows user can read that vault; that is how the desktop credential store works.
 - The only network calls are Cursor calls: the catalog on save, and the agent during a run.
 - A page counts as text when it has at least 40 letters. On drop, fewer than 80% of pages passing means the incompatible-file message and no checklist.
 - Slice text is PDF.js text in engine order. Each page is stamped `--- PAGE N ---` using the PDF page index. v1 does no column reordering and no hyphen repair.
-- A listing is a run of lines whose PDF.js font-family hint is monospace. Those listings are required on the board.
-- Slicing uses the PDF outline when it exists. A heading of 6 pages or fewer is one slice. A longer heading splits on child outline entries, then into consecutive chunks of 6 pages, last chunk shorter. Pages in no outline entry become slices titled “Pages a–b”, at most 6 pages, starting unchecked. With no outline, slices are tiled 4-page windows labeled as page windows, last window shorter. A window starts unchecked when its text begins with one of the English front-matter titles listed in the user stories. Other windows start checked.
+- A listing is a run of lines whose PDF.js font-family hint is monospace. A one-line run that is only a URL, or only digits, is not a listing. Every other listing is required on the board.
+- Slicing uses the PDF outline when it exists. If any bookmark is titled Chapter plus a number, those bookmarks are the chapters, including when they sit under parts. A chapter is cut on its own sections, not on their children. A section longer than 6 pages becomes consecutive chunks of 6 pages, last chunk shorter, and the chunks keep that section’s title. Pages from the chapter start up to the first section join that first section, and the 6-page cap then splits from the front. Two section bookmarks on the same page keep the first. Pages outside every chapter start unchecked when the bookmark is cover, copyright, contents, contributors, a Packt page, introduction, about the author or reviewer, or one of the other front-matter titles. Another heading outside a chapter starts checked. A run of single-letter index bookmarks stays under the Index title, in chunks of at most 6 pages. When no bookmark is titled Chapter plus a number, a heading of 6 pages or fewer is one slice, and a longer heading splits on child outline entries, then into consecutive chunks of 6 pages, last chunk shorter. Pages in no outline entry become slices titled “Pages a–b”, at most 6 pages, starting unchecked. With no outline, slices are tiled 4-page windows labeled as page windows, last window shorter. A window starts unchecked when its text begins with one of the English front-matter titles listed in the user stories. Other windows start checked.
 - The PDF is chosen by drop or by a file chooser. The output folder is chosen by a folder chooser. A missing folder is created. A folder that already holds a readable book manifest opens that book and does not replace the output folder. Any other folder is the output folder, even when it already holds files. An unreadable manifest is refused.
 - Start opens the slice checklist as a sheet, and Confirm on that sheet starts the queue. The checklist itself is local. While the queue runs, the viewer stays on the same window.
 - Each slice runs in its own agent workspace that holds the slice text and the board instructions. The app copies a board into the book folder only after validation. The key and the other boards stay outside that workspace.

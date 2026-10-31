@@ -1,16 +1,8 @@
-import { createRequire } from 'node:module';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readCursorKey } from './cursorKey';
-
-const nodeRequire = createRequire(import.meta.url);
-
-GlobalWorkerOptions.workerSrc = pathToFileURL(
-  nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
-).href;
+import { readSlice } from './listings';
 
 const keepEveryTechnicalDetail =
   'It keeps every technical rule, number, threshold, mechanism, edge case, and warning.';
@@ -276,19 +268,6 @@ function instructions(): string {
   ].join('\n');
 }
 
-type PdfTextItem = {
-  str?: string;
-  transform?: number[];
-  fontName?: string;
-};
-
-type BuiltLine = {
-  text: string;
-  y: number;
-  monospaceChars: boolean;
-  otherChars: boolean;
-};
-
 function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
@@ -317,75 +296,6 @@ function shapeRejects(board: Board, pageStart: number, pageEnd: number): boolean
 function listingsMatch(board: Board, listings: string[]): boolean {
   const source = collapseWhitespace(board.code.map((block) => block.source).join('\n'));
   return listings.every((listing) => source.includes(collapseWhitespace(listing)));
-}
-
-async function readSlice(
-  bytes: Uint8Array,
-  pageStart: number,
-  pageEnd: number,
-): Promise<{ text: string; listings: string[] }> {
-  const task = getDocument({ data: new Uint8Array(bytes), verbosity: 0 });
-  const pdf = await task.promise;
-  try {
-    const pages: string[] = [];
-    const listings: string[] = [];
-    let run: string[] = [];
-    const flush = (): void => {
-      if (run.length > 0) {
-        listings.push(run.join('\n'));
-        run = [];
-      }
-    };
-    for (let pageNumber = pageStart; pageNumber <= pageEnd; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const styles = content.styles as Record<string, { fontFamily?: string }>;
-      const lines: BuiltLine[] = [];
-      for (const item of content.items as PdfTextItem[]) {
-        if (typeof item.str !== 'string') {
-          continue;
-        }
-        const y = item.transform?.[5] ?? 0;
-        const monospace = styles[item.fontName ?? '']?.fontFamily === 'monospace';
-        const last = lines[lines.length - 1];
-        if (!last || Math.abs(y - last.y) > 2) {
-          lines.push({
-            text: item.str,
-            y,
-            monospaceChars: item.str.trim() !== '' && monospace,
-            otherChars: item.str.trim() !== '' && !monospace,
-          });
-        } else {
-          last.text += item.str;
-          if (item.str.trim() !== '') {
-            if (monospace) {
-              last.monospaceChars = true;
-            } else {
-              last.otherChars = true;
-            }
-          }
-        }
-      }
-      const pageLines: string[] = [];
-      for (const line of lines) {
-        if (line.text.trim() === '') {
-          flush();
-          continue;
-        }
-        pageLines.push(line.text);
-        if (line.monospaceChars && !line.otherChars) {
-          run.push(line.text.trim());
-        } else {
-          flush();
-        }
-      }
-      pages.push(`--- PAGE ${pageNumber} ---\n${pageLines.join('\n')}`);
-    }
-    flush();
-    return { text: `${pages.join('\n')}\n`, listings };
-  } finally {
-    await task.destroy();
-  }
 }
 
 let temporaryWorkRoot: string | undefined;
@@ -429,6 +339,7 @@ async function nextReply(modelId: string, sectionId: string, workspace: string, 
     apiKey,
     model: { id: modelId },
     local: { cwd: workspace },
+    tools: [],
   });
   return typeof result.result === 'string' ? result.result : '';
 }
