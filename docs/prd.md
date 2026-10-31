@@ -10,7 +10,7 @@ The reader wants each small section as a board: every technical point still ther
 
 ## Solution
 
-A local Electron app. The reader drops one PDF, chooses a folder, saves a Cursor key, picks one model, and confirms which slices to run. The app slices the book locally, sends one slice of text at a time to a Cursor agent, and keeps a board file only when it matches the board shape. Study opens the first accepted board while later slices run. Closing the app keeps every accepted board. Opening the folder again shows them and spends nothing until the reader presses Continue.
+A local Electron app. The reader drops one PDF, chooses a folder, saves a Cursor key, picks one model, and confirms which slices to run. The app slices the book locally, sends one slice of text at a time to a Cursor agent, and keeps a board file only when it matches the board shape. The viewer shows the first accepted board while later slices run. Closing the app keeps every accepted board. Opening the folder again shows them and spends nothing until the reader presses Continue.
 
 ## Terms
 
@@ -23,8 +23,8 @@ A local Electron app. The reader drops one PDF, chooses a folder, saves a Cursor
 - **Book folder.** The output folder for one PDF. It is the record.
 - **Manifest.** The index of that folder. A slice is done because its board file validates, and the app can rewrite the manifest from the board files and the PDF.
 - **Note.** The markdown rendering of one board, written when that board is accepted.
-- **Launchpad.** The screen before a run: PDF, folder, key, model.
-- **Study.** The screen during and after a run: slice list, board, page drawer.
+- **Launchpad.** The screen before a run: a drop zone and one Start button. The key, the model, and the folder are inside a Settings popup.
+- **Study.** The viewer region on the same window during and after a run: slice list, board, page drawer.
 
 A **page** is the PDF page index. The printed folio in the corner is ignored. The number on a claim and the page the drawer opens are the same number.
 
@@ -68,17 +68,17 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 36. As a reader, I want a slice with no technical content to become a valid empty board, so that the queue moves on and the viewer says those pages had no technical content.
 37. As a reader, I want a board file and a note on disk as soon as the board is accepted, so that a crash keeps what I already paid for.
 38. As a reader, I want an existing valid board skipped on the next run, so that I do not pay twice.
-39. As a reader, I want to open a book folder and see Study without a model call, so that browsing past work is free.
+39. As a reader, I want to open a book folder and see the viewer without a model call, so that browsing past work is free.
 40. As a reader, I want Continue, when the queue is idle, to run every checked slice that is missing or failed, so that I finish the book on purpose.
 41. As a reader, I want checkboxes on slices that are not done, so that I can skip a remaining slice before Continue.
 42. As a reader, I want Redo, when the queue is idle, to keep the current board up until the new one validates, so that a failed redo leaves the old board.
 43. As a reader, I want the drawer to say the PDF is missing when the stored path is gone, so that the boards still open.
-44. As a reader, I want the UI in English, on one dark appearance, so that the app stays a simple reading tool.
+44. As a reader, I want the UI in English, on one dark appearance (near-black canvas, thin borders, short motion), so that the app stays a simple reading tool.
 45. As a reader, I want to run the app from this repo on Windows, so that I can use it before any installer exists.
 
 ## Implementation Decisions
 
-- The app is one Electron program, TypeScript. Electron’s main process reads the PDF, stores the key, and calls Cursor. The window is a React page with one stylesheet, dark, English.
+- The app is one Electron program, TypeScript. Electron’s main process reads the PDF, stores the key, and calls Cursor. The window is a React page with one stylesheet, English, on a solid near-black surface.
 - v1 runs on Windows. It is started from this repo with Node. A packaged executable waits.
 - The Cursor SDK is the model caller. Auth is a Cursor API key. Inference goes through Cursor’s hosted models. The model list is the catalog for that key. One model applies to the whole run. The last model and the last output folder live in ordinary app settings.
 - The key is stored in Windows Credential Manager, tied to the Windows login. Save asks Cursor for the catalog first. Failure stores nothing and shows the error. After a successful save the field is write-only. Any program running as the same Windows user can read that vault; that is how the desktop credential store works.
@@ -88,14 +88,14 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 - A listing is a run of lines whose PDF.js font-family hint is monospace. Those listings are required on the board.
 - Slicing uses the PDF outline when it exists. A heading of 6 pages or fewer is one slice. A longer heading splits on child outline entries, then into consecutive chunks of 6 pages, last chunk shorter. Pages in no outline entry become slices titled “Pages a–b”, at most 6 pages, starting unchecked. With no outline, slices are tiled 4-page windows labeled as page windows, last window shorter. A window starts unchecked when its text begins with one of the English front-matter titles listed in the user stories. Other windows start checked.
 - The PDF is chosen by drop or by a file chooser. The output folder is chosen by a folder chooser. A missing folder is created. Any other existing folder is refused with a short message unless it is already this PDF’s book folder.
-- Confirm on the checklist starts the queue. The checklist itself is local. While the queue runs, Study stays up. Back to the launchpad is available once the queue is idle.
+- Start opens the slice checklist as a sheet, and Confirm on that sheet starts the queue. The checklist itself is local. While the queue runs, the viewer stays on the same window.
 - Each slice runs in its own agent workspace that holds the slice text and the board instructions. The app copies a board into the book folder only after validation. The key and the other boards stay outside that workspace.
 - The queue is serial. A rejected board is tried once automatically. A second rejection marks the slice failed. The short reason is one of: shape, missing listing, network, cancelled. Cancel stops the queue. A network failure uses the same failed state.
 - The agent’s job is complete technical extraction of that slice. It keeps every technical rule, number, threshold, mechanism, edge case, and warning. It keeps the book’s own example on the point it illustrates. It copies every required listing verbatim and adds short line notes; those notes are the agent’s words. It leaves out conversational filler, anecdotes that teach no rule, historical trivia, and repeated intros. It cites the PDF page from the page stamps. It adds no example the book did not write.
 - A point has exactly one kind: `must-remember`, `mechanics`, or `useful-later`.
 - Validation rejects a board when `schemaVersion` is missing or not `1`, when any page falls outside the slice, or when a required listing is absent after whitespace is collapsed. A real code difference still rejects the board. A board with no points and no code is valid when the slicer found no listings.
 - Redo and Continue are available when the queue is idle. Redo uses the model selected now. The previous board stays in place until the replacement validates.
-- Opening a book folder shows Study and does not call the agent. Done slices are the ones whose board file exists and validates. Missing and failed slices that are still checked are what Continue runs. Unchecking a slice that has no board skips it. Unchecking a slice that already has a board leaves that board.
+- Opening a book folder shows the viewer and does not call the agent. Done slices are the ones whose board file exists and validates. Missing and failed slices that are still checked are what Continue runs. Unchecking a slice that has no board skips it. Unchecking a slice that already has a board leaves that board.
 - The book folder looks like this:
 
 ```text
@@ -140,7 +140,7 @@ Board shape:
 
 ## Testing Decisions
 
-A good test checks behavior the reader can observe: accept or refuse, the checklist, the files in the book folder, and what Study shows. Tests avoid private helpers.
+A good test checks behavior the reader can observe: accept or refuse, the checklist, the files in the book folder, and what the viewer shows. Tests avoid private helpers.
 
 The highest seam is the app’s operation on a PDF and a book folder. There is no prior test suite.
 

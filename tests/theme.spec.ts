@@ -14,25 +14,41 @@ async function launchApp(): Promise<{ app: ElectronApplication; window: Page }> 
   return { app, window };
 }
 
-test('the launchpad shows viking-night page, text, and heading colors', async () => {
+function radiusAtMost8(radius: string): boolean {
+  return radius
+    .split(' ')
+    .filter((part) => part.length > 0)
+    .every((part) => Number.parseFloat(part) <= 8);
+}
+
+test('the window uses a solid dark surface', async () => {
   const { app, window } = await launchApp();
   try {
-    await expect(window.getByRole('heading', { level: 1 })).toBeVisible();
-    const colors = await window.evaluate(() => {
-      const heading = document.querySelector('h1');
-      if (!heading) {
-        throw new Error('missing heading');
+    await expect(window.getByText('Drop a PDF')).toBeVisible();
+    const surface = await window.evaluate(() => {
+      const root = document.getElementById('root');
+      const label = [...document.querySelectorAll('body *')].find((element) => element.textContent === 'Drop a PDF');
+      const target = label?.closest('.drop') ?? null;
+      const button = document.querySelector('button');
+      if (!root || !target || !button) {
+        throw new Error('missing surface');
       }
-      const body = getComputedStyle(document.body);
-      return {
-        background: body.backgroundColor,
-        color: body.color,
-        heading: getComputedStyle(heading).color,
-      };
+      function read(element: Element): { radius: string; blur: string; background: string } {
+        const style = getComputedStyle(element);
+        return {
+          radius: style.borderRadius,
+          blur: style.backdropFilter,
+          background: style.backgroundColor,
+        };
+      }
+      return { root: read(root), drop: read(target), button: read(button) };
     });
-    expect(colors.background).toBe('rgb(22, 29, 34)');
-    expect(colors.color).toBe('rgb(231, 226, 214)');
-    expect(colors.heading).toBe('rgb(235, 203, 139)');
+    expect(['rgb(9, 9, 11)', 'rgba(9, 9, 11, 1)']).toContain(surface.root.background);
+    expect(surface.root.blur).not.toContain('blur');
+    for (const item of [surface.drop, surface.button]) {
+      expect(radiusAtMost8(item.radius)).toBe(true);
+      expect(item.blur).not.toContain('blur');
+    }
   } finally {
     await app.close();
   }

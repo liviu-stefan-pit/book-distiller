@@ -28,6 +28,24 @@ contextBridge.exposeInMainWorld('bookDistiller', {
   redo: (input: DistillInput, sectionId: string): Promise<RedoResult> =>
     ipcRenderer.invoke('redo', input, sectionId),
   cancelDistill: (): Promise<void> => ipcRenderer.invoke('cancel-distill'),
+  minimizeWindow: (): void => {
+    ipcRenderer.send('window-minimize');
+  },
+  toggleMaximizeWindow: (): void => {
+    ipcRenderer.send('window-toggle-maximize');
+  },
+  closeWindow: (): void => {
+    ipcRenderer.send('window-close');
+  },
+  onMaximized: (listener: (maximized: boolean) => void): (() => void) => {
+    const wrapped = (_event: unknown, maximized: boolean): void => {
+      listener(maximized);
+    };
+    ipcRenderer.on('window-maximized', wrapped);
+    return () => {
+      ipcRenderer.removeListener('window-maximized', wrapped);
+    };
+  },
   onDistillProgress: (listener: (slices: DistillSlice[]) => void): (() => void) => {
     const wrapped = (_event: unknown, slices: DistillSlice[]): void => {
       listener(slices);

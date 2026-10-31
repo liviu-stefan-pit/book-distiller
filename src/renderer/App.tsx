@@ -53,7 +53,7 @@ function BoardView({ board, onPage }: { board: Board; onPage: (page: number) => 
         {board.code.map((block) => (
           <article key={`${block.title}-${block.page}`}>
             <h3>{block.title}</h3>
-            <p>{block.language}</p>
+            <p className="caption">{block.language}</p>
             <p>
               <button type="button" onClick={() => onPage(block.page)}>
                 Page {block.page}
@@ -142,12 +142,14 @@ function PageDrawer({
   return (
     <aside className="drawer" aria-label={`Page ${page}`} ref={frameRef}>
       <canvas ref={canvasRef} />
-      <button type="button" onClick={() => onPage(Math.max(pageStart, page - 1))}>
-        Previous
-      </button>
-      <button type="button" onClick={() => onPage(Math.min(pageEnd, page + 1))}>
-        Next
-      </button>
+      <div className="drawer-nav">
+        <button type="button" onClick={() => onPage(Math.max(pageStart, page - 1))}>
+          Previous
+        </button>
+        <button type="button" onClick={() => onPage(Math.min(pageEnd, page + 1))}>
+          Next
+        </button>
+      </div>
     </aside>
   );
 }
@@ -175,9 +177,16 @@ export function App() {
   const [queueRunning, setQueueRunning] = useState(false);
   const [redoFailure, setRedoFailure] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const keyLocked = useRef(false);
   const folderChosen = useRef(false);
   const picked = useRef(false);
+
+  useEffect(() => {
+    return window.bookDistiller.onMaximized(setMaximized);
+  }, []);
 
   useEffect(() => {
     let current = true;
@@ -462,8 +471,9 @@ export function App() {
     );
   }
 
-  function onDrop(event: DragEvent<HTMLParagraphElement>): void {
+  function onDrop(event: DragEvent<HTMLDivElement>): void {
     event.preventDefault();
+    setDragOver(false);
     const file = event.dataTransfer.files[0];
     if (file) {
       void openFile(file);
@@ -485,159 +495,224 @@ export function App() {
   const openSlice = study.find((slice) => slice.id === openId);
   const canRedo = openSlice?.status === 'done' && openSlice.board !== undefined;
 
+  const heading =
+    screen === 'study' && bookTitle !== ''
+      ? bookTitle
+      : screen === 'study' && decision?.accepted
+        ? decision.title
+        : 'Book Distiller';
+
   return (
-    <main>
-      <h1>{screen === 'study' ? 'Study' : 'Book Distiller'}</h1>
-      {screen === 'launchpad' ? (
-        <>
-          <p onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
-            Drop a PDF
-          </p>
-          <label>
-            Choose a PDF
-            <input type="file" accept="application/pdf,.pdf" onChange={onChoose} />
-          </label>
-          <button type="button" onClick={() => void chooseFolder()}>
-            Choose a folder
+    <main className={screen === 'study' ? 'app viewer-mode' : 'app'}>
+      <header className="topbar">
+        <h1>{heading}</h1>
+        {screen === 'study' && queueRunning ? (
+          <button type="button" onClick={() => void window.bookDistiller.cancelDistill()}>
+            Cancel
           </button>
-          {folderPath !== '' ? <p>{folderPath}</p> : null}
-          {folderMessage !== '' ? <p className="notice">{folderMessage}</p> : null}
-          {hasKey && !replacing ? (
-            <button type="button" onClick={beginReplace}>
-              Replace key
+        ) : null}
+        {screen === 'study' && !queueRunning && canContinue ? (
+          <button type="button" onClick={() => void continueBook()}>
+            Continue
+          </button>
+        ) : null}
+        {screen === 'study' && !queueRunning && canRedo ? (
+          <button type="button" onClick={() => void redoOpen()}>
+            Redo
+          </button>
+        ) : null}
+        {screen === 'study' && redoFailure !== '' ? <span>{redoFailure}</span> : null}
+        <button
+          type="button"
+          className="settings-button"
+          aria-label="Settings"
+          onClick={() => setSettingsOpen((open) => !open)}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <circle cx="7" cy="7" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.25" />
+            <path
+              d="M7 1.15v1.35M7 11.5v1.35M1.15 7h1.35M11.5 7h1.35M2.85 2.85l.95.95M10.2 10.2l.95.95M11.15 2.85l-.95.95M3.8 10.2l-.95.95"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+        <div className="window-controls">
+          <button type="button" aria-label="Minimize" onClick={() => window.bookDistiller.minimizeWindow()}>
+            <span className="glyph min" />
+          </button>
+          <button
+            type="button"
+            aria-label={maximized ? 'Restore' : 'Maximize'}
+            onClick={() => window.bookDistiller.toggleMaximizeWindow()}
+          >
+            <span className={maximized ? 'glyph restore' : 'glyph max'} />
+          </button>
+          <button type="button" className="close" aria-label="Close" onClick={() => window.bookDistiller.closeWindow()}>
+            <span className="glyph close-x" />
+          </button>
+        </div>
+      </header>
+      {settingsOpen ? (
+        <div className="overlay settings-flyout">
+          <div className="sheet" role="dialog" aria-label="Settings">
+            <button type="button" onClick={() => void chooseFolder()}>
+              Choose a folder
             </button>
-          ) : (
-            <>
-              <label>
-                Cursor key
-                <input value={draftKey} onChange={(event) => setDraftKey(event.target.value)} />
-              </label>
-              <button type="button" onClick={() => void saveKey()}>
-                Save
+            {folderPath !== '' ? <p>{folderPath}</p> : null}
+            {folderMessage !== '' ? <p className="notice">{folderMessage}</p> : null}
+            {hasKey && !replacing ? (
+              <button type="button" onClick={beginReplace}>
+                Replace key
               </button>
-            </>
-          )}
-          {hasKey ? (
-            <button type="button" onClick={() => void forgetKey()}>
-              Forget key
-            </button>
-          ) : null}
-          {modelIds.length > 0 ? (
+            ) : (
+              <>
+                <label>
+                  Cursor key
+                  <input value={draftKey} onChange={(event) => setDraftKey(event.target.value)} />
+                </label>
+                <button type="button" onClick={() => void saveKey()}>
+                  Save
+                </button>
+              </>
+            )}
+            {hasKey ? (
+              <button type="button" onClick={() => void forgetKey()}>
+                Forget key
+              </button>
+            ) : null}
+            {modelIds.length > 0 ? (
+              <label>
+                Model
+                <select
+                  value={modelId}
+                  onChange={(event) => {
+                    keyLocked.current = true;
+                    const next = event.target.value;
+                    setModelId(next);
+                    void window.bookDistiller.chooseModel(next);
+                  }}
+                >
+                  <option value=""></option>
+                  {modelIds.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {keyMessage !== '' ? <p className="notice">{keyMessage}</p> : null}
+          </div>
+        </div>
+      ) : null}
+      {screen === 'launchpad' || screen === 'checklist' ? (
+        <div className="home">
+          <div
+            className={dragOver ? 'drop over' : 'drop'}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                return;
+              }
+              setDragOver(false);
+            }}
+            onDrop={onDrop}
+          >
+            <p>Drop a PDF</p>
             <label>
-              Model
-              <select
-                value={modelId}
-                onChange={(event) => {
-                  keyLocked.current = true;
-                  const next = event.target.value;
-                  setModelId(next);
-                  void window.bookDistiller.chooseModel(next);
-                }}
-              >
-                <option value=""></option>
-                {modelIds.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-              </select>
+              Choose a PDF
+              <input type="file" accept="application/pdf,.pdf" onChange={onChoose} />
             </label>
-          ) : null}
-          {keyMessage !== '' ? <p className="notice">{keyMessage}</p> : null}
+          </div>
           {decision?.accepted ? (
             <>
               <p>{decision.title}</p>
-              <p>{decision.pageCount === 1 ? '1 page' : `${decision.pageCount} pages`}</p>
+              <p className="meta">{decision.pageCount === 1 ? '1 page' : `${decision.pageCount} pages`}</p>
             </>
           ) : null}
           {decision && !decision.accepted ? <p className="notice">{decision.message}</p> : null}
-          <button type="button" disabled={!startEnabled} onClick={() => void start()}>
+          <button type="button" className="primary" disabled={!startEnabled} onClick={() => void start()}>
             Start
           </button>
-        </>
+        </div>
       ) : null}
       {screen === 'checklist' ? (
-        <>
-          <ul>
-            {slices.map((slice) => (
-              <li key={slice.id}>
-                <label>
-                  <input type="checkbox" checked={slice.checked} onChange={() => toggleSlice(slice.id)} />
-                  {slice.title} <span>{pageRange(slice.pageStart, slice.pageEnd)}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-          <button type="button" disabled={!confirmEnabled} onClick={() => void confirm()}>
-            Confirm
-          </button>
-        </>
+        <div className="overlay">
+          <div className="sheet" role="dialog" aria-label="Slices">
+            <ul className="checklist">
+              {slices.map((slice) => (
+                <li key={slice.id}>
+                  <label>
+                    <input type="checkbox" checked={slice.checked} onChange={() => toggleSlice(slice.id)} />
+                    {slice.title} <span>{pageRange(slice.pageStart, slice.pageEnd)}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="primary" disabled={!confirmEnabled} onClick={() => void confirm()}>
+              Confirm
+            </button>
+          </div>
+        </div>
       ) : null}
       {screen === 'study' ? (
-        <ul>
-          {study
-            .filter((slice) => showAllSlices || slice.checked)
-            .map((slice) => (
-              <li key={slice.id}>
-                {!queueRunning && slice.status !== 'done' ? (
-                  <input type="checkbox" checked={slice.checked} onChange={() => toggleStudy(slice.id)} />
-                ) : null}
-                <button type="button" onClick={() => openDone(slice)}>
-                  {slice.title}
-                </button>{' '}
-                <span>{pageRange(slice.pageStart, slice.pageEnd)}</span>
-                {slice.id === openId && slice.status === 'done' && slice.board ? (
-                  <BoardView
-                    board={slice.board}
-                    onPage={(page) => {
-                      if (pdfMissing) {
-                        setShowMissingPdf(true);
-                        setDrawer(null);
-                        return;
-                      }
-                      setShowMissingPdf(false);
-                      setDrawer({ page, pageStart: slice.pageStart, pageEnd: slice.pageEnd });
-                    }}
-                  />
-                ) : null}
-                {slice.status === 'queued' ? ' queued' : null}
-                {slice.status === 'writing' ? ' writing' : null}
-                {slice.status === 'done' ? ' done' : null}
-                {slice.status === 'failed' ? ` failed ${slice.failureReason}` : null}
-              </li>
-            ))}
-        </ul>
-      ) : null}
-      {screen === 'study' && queueRunning ? (
-        <button type="button" onClick={() => void window.bookDistiller.cancelDistill()}>
-          Cancel
-        </button>
-      ) : null}
-      {screen === 'study' && !queueRunning && canContinue ? (
-        <button type="button" onClick={() => void continueBook()}>
-          Continue
-        </button>
-      ) : null}
-      {screen === 'study' && !queueRunning && canRedo ? (
-        <button type="button" onClick={() => void redoOpen()}>
-          Redo
-        </button>
-      ) : null}
-      {screen === 'study' && redoFailure !== '' ? <span>{redoFailure}</span> : null}
-      {screen === 'study' && !queueRunning ? (
-        <button type="button" onClick={() => setScreen('launchpad')}>
-          Launchpad
-        </button>
-      ) : null}
-      {screen === 'study' && showMissingPdf ? <p>The PDF is missing.</p> : null}
-      {screen === 'study' && drawer && pdfBytes ? (
-        <PageDrawer
-          pdfBytes={pdfBytes}
-          page={drawer.page}
-          pageStart={drawer.pageStart}
-          pageEnd={drawer.pageEnd}
-          onPage={(page) => setDrawer({ ...drawer, page })}
-        />
+        <div className="viewer" role="region" aria-label="Viewer">
+          {showMissingPdf ? <p className="notice">The PDF is missing.</p> : null}
+          <div className={drawer && pdfBytes ? 'workspace with-page' : 'workspace'}>
+            <ul>
+              {study
+                .filter((slice) => showAllSlices || slice.checked)
+                .map((slice) => (
+                  <li key={slice.id} className={slice.id === openId ? 'is-open' : undefined}>
+                    {!queueRunning && slice.status !== 'done' ? (
+                      <input type="checkbox" checked={slice.checked} onChange={() => toggleStudy(slice.id)} />
+                    ) : null}
+                    <button type="button" onClick={() => openDone(slice)}>
+                      {slice.title}
+                    </button>
+                    <span className="range">{pageRange(slice.pageStart, slice.pageEnd)}</span>
+                    {slice.status === 'queued' ? <span className="status">queued</span> : null}
+                    {slice.status === 'writing' ? <span className="status">writing</span> : null}
+                    {slice.status === 'done' ? <span className="status done">done</span> : null}
+                    {slice.status === 'failed' ? (
+                      <span className="status failed">failed {slice.failureReason}</span>
+                    ) : null}
+                  </li>
+                ))}
+            </ul>
+            <div className="reading">
+              {openSlice?.status === 'done' && openSlice.board ? (
+                <BoardView
+                  board={openSlice.board}
+                  onPage={(page) => {
+                    if (pdfMissing) {
+                      setShowMissingPdf(true);
+                      setDrawer(null);
+                      return;
+                    }
+                    setShowMissingPdf(false);
+                    setDrawer({ page, pageStart: openSlice.pageStart, pageEnd: openSlice.pageEnd });
+                  }}
+                />
+              ) : null}
+            </div>
+            {drawer && pdfBytes ? (
+              <PageDrawer
+                pdfBytes={pdfBytes}
+                page={drawer.page}
+                pageStart={drawer.pageStart}
+                pageEnd={drawer.pageEnd}
+                onPage={(page) => setDrawer({ ...drawer, page })}
+              />
+            ) : null}
+          </div>
+        </div>
       ) : null}
     </main>
   );

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { openSettings } from './boardLaunch';
 
 const require = createRequire(import.meta.url);
 const electronPath = require('electron') as string;
@@ -59,8 +60,17 @@ test('a saved key lists the catalog models and hides the key', async () => {
   const { app, window } = await launchApp(userData, catalogFile);
   try {
     await expect(window.getByText('Drop a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByRole('button', { name: 'Start' })).toBeVisible();
+    await expect(window.getByLabel('Cursor key')).toHaveCount(0);
+    await expect(window.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: 'Choose a folder' })).toHaveCount(0);
+    await expect(window.getByRole('region', { name: 'Viewer' })).toHaveCount(0);
+    await openSettings(window);
     await expect(window.getByLabel('Cursor key')).toBeVisible();
+    await openSettings(window);
     await window.getByLabel('Cursor key').fill(secret);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Save' }).click();
     await expect(window.getByRole('option', { name: 'north-model' })).toHaveCount(1);
     await expect(window.getByRole('option', { name: 'south-model' })).toHaveCount(1);
@@ -88,8 +98,11 @@ test('a refused key stays in the paste field and shows the error', async () => {
   await mkdir(userData);
   const { app, window } = await launchApp(userData, catalogFile);
   try {
+    await openSettings(window);
     await expect(window.getByLabel('Cursor key')).toBeVisible();
+    await openSettings(window);
     await window.getByLabel('Cursor key').fill(secret);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Save' }).click();
     await expect(window.getByText('That key was refused.')).toBeVisible();
     await expect(window.getByLabel('Cursor key')).toHaveValue(secret);
@@ -110,9 +123,13 @@ test('forget key brings back the paste field and removes the models', async () =
   await mkdir(userData);
   const { app, window } = await launchApp(userData, catalogFile);
   try {
+    await openSettings(window);
     await window.getByLabel('Cursor key').fill(secret);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Save' }).click();
+    await openSettings(window);
     await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
+    await openSettings(window);
     await window.getByRole('button', { name: 'Forget key' }).click();
     await expect(window.getByLabel('Cursor key')).toBeVisible();
     await expect(window.getByLabel('Cursor key')).toHaveValue('');
@@ -134,17 +151,24 @@ test('a refused replacement keeps the saved models and the chosen model', async 
   await mkdir(userData);
   const { app, window } = await launchApp(userData, catalogFile);
   try {
+    await openSettings(window);
     await window.getByLabel('Cursor key').fill(secret);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Save' }).click();
+    await openSettings(window);
     await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
     await writeFile(catalogFile, JSON.stringify({ error: 'That key was refused.' }));
+    await openSettings(window);
     await window.getByRole('button', { name: 'Replace key' }).click();
     await expect(window.getByLabel('Cursor key')).toBeVisible();
+    await openSettings(window);
     await window.getByLabel('Cursor key').fill('cursor-test-key-beta');
+    await openSettings(window);
     await window.getByRole('button', { name: 'Save' }).click();
     await expect(window.getByText('That key was refused.')).toBeVisible();
     await expect(window.getByRole('option', { name: 'north-model' })).toHaveCount(1);
     await expect(window.getByRole('option', { name: 'south-model' })).toHaveCount(1);
+    await openSettings(window);
     await expect(window.getByRole('combobox', { name: 'Model' })).toHaveValue('north-model');
   } finally {
     await app.close();
@@ -171,20 +195,25 @@ test('start stays off until the pdf, key, model, and folder are set', async () =
     await window.locator('input[type=file]').setInputFiles(path.join(process.cwd(), 'fixtures/booklet.pdf'));
     await expect(window.getByText('Distiller Booklet')).toBeVisible();
     await expect(start).toBeDisabled();
+    await openSettings(window);
     await window.getByLabel('Cursor key').fill(secret);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Save' }).click();
     await expect(start).toBeDisabled();
 
     await app.evaluate(({ dialog }, chosen: string) => {
       dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
     }, empty);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Choose a folder' }).click();
+    await openSettings(window);
     await expect(window.getByText(empty)).toBeVisible();
     await expect(start).toBeDisabled();
 
     await app.evaluate(({ dialog }, chosen: string) => {
       dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
     }, occupied);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Choose a folder' }).click();
     await expect(window.getByText(refusal)).toBeVisible();
     await expect(start).toBeDisabled();
@@ -192,17 +221,21 @@ test('start stays off until the pdf, key, model, and folder are set', async () =
     await app.evaluate(({ dialog }, chosen: string) => {
       dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
     }, empty);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Choose a folder' }).click();
     await expect(window.getByText(refusal)).toHaveCount(0);
+    await openSettings(window);
     await expect(window.getByText(empty)).toBeVisible();
     await expect(start).toBeDisabled();
 
+    await openSettings(window);
     await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
     await expect(start).toBeEnabled();
 
     await app.evaluate(({ dialog }, chosen: string) => {
       dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
     }, occupied);
+    await openSettings(window);
     await window.getByRole('button', { name: 'Choose a folder' }).click();
     await expect(window.getByText(refusal)).toBeVisible();
     await expect(start).toBeDisabled();
@@ -224,13 +257,18 @@ test('a relaunch remembers the folder and model without reading the catalog', as
   const first = await launchApp(userData, catalogFile);
   try {
     try {
+      await openSettings(first.window);
       await first.window.getByLabel('Cursor key').fill(secret);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Save' }).click();
+      await openSettings(first.window);
       await first.window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
       await first.app.evaluate(({ dialog }, chosen: string) => {
         dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
       }, folder);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Choose a folder' }).click();
+      await openSettings(first.window);
       await expect(first.window.getByText(folder)).toBeVisible();
     } finally {
       await first.app.close();
@@ -241,7 +279,9 @@ test('a relaunch remembers the folder and model without reading the catalog', as
       await expect(second.window.getByText('Drop a PDF')).toBeVisible();
       await dropPdf(second.window, booklet, 'booklet.pdf');
       await expect(second.window.getByText('Distiller Booklet')).toBeVisible();
+      await openSettings(second.window);
       await expect(second.window.getByText(folder)).toBeVisible();
+      await openSettings(second.window);
       await expect(second.window.getByRole('combobox', { name: 'Model' })).toHaveValue('north-model');
       await expect(second.window.getByRole('button', { name: 'Start' })).toBeEnabled();
       const leaked = await second.window.evaluate((key) => {
@@ -272,26 +312,36 @@ test('choosing a folder while the session loads keeps the saved key and model', 
   const first = await launchApp(userData, catalogFile);
   try {
     try {
+      await openSettings(first.window);
       await first.window.getByLabel('Cursor key').fill(secret);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Save' }).click();
+      await openSettings(first.window);
       await first.window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
       await first.app.evaluate(({ dialog }, chosen: string) => {
         dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
       }, folder);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Choose a folder' }).click();
+      await openSettings(first.window);
       await expect(first.window.getByText(folder)).toBeVisible();
     } finally {
       await first.app.close();
     }
     const second = await launchApp(userData, catalogFile, { BOOK_DISTILLER_SESSION_DELAY_MS: '2000' });
     try {
+      await openSettings(second.window);
       await expect(second.window.getByRole('button', { name: 'Choose a folder' })).toBeVisible();
       await second.app.evaluate(({ dialog }, chosen: string) => {
         dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
       }, other);
+      await openSettings(second.window);
       await second.window.getByRole('button', { name: 'Choose a folder' }).click();
+      await openSettings(second.window);
       await expect(second.window.getByRole('button', { name: 'Replace key' })).toBeVisible();
+      await openSettings(second.window);
       await expect(second.window.getByText(other)).toBeVisible();
+      await openSettings(second.window);
       await expect(second.window.getByRole('combobox', { name: 'Model' })).toHaveValue('north-model');
       const leaked = await second.window.evaluate((key) => {
         const values = [...document.querySelectorAll('input, textarea')].map((element) =>
@@ -319,13 +369,18 @@ test('a refused save during session load keeps the stored key and shows the erro
   const first = await launchApp(userData, catalogFile);
   try {
     try {
+      await openSettings(first.window);
       await first.window.getByLabel('Cursor key').fill(secret);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Save' }).click();
+      await openSettings(first.window);
       await first.window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
       await first.app.evaluate(({ dialog }, chosen: string) => {
         dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
       }, folder);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Choose a folder' }).click();
+      await openSettings(first.window);
       await expect(first.window.getByText(folder)).toBeVisible();
     } finally {
       await first.app.close();
@@ -333,7 +388,9 @@ test('a refused save during session load keeps the stored key and shows the erro
     await writeFile(catalogFile, JSON.stringify({ error: 'That key was refused.' }));
     const second = await launchApp(userData, catalogFile, { BOOK_DISTILLER_SESSION_DELAY_MS: '2000' });
     try {
+      await openSettings(second.window);
       await second.window.getByLabel('Cursor key').fill('cursor-test-key-beta');
+      await openSettings(second.window);
       await second.window.getByRole('button', { name: 'Save' }).click();
       await expect(second.window.getByText('That key was refused.')).toBeVisible();
       await expect(second.window.getByRole('button', { name: 'Replace key' })).toBeVisible();
@@ -360,19 +417,25 @@ test('a failed session read shows that the saved key could not be read', async (
   const first = await launchApp(userData, catalogFile);
   try {
     try {
+      await openSettings(first.window);
       await first.window.getByLabel('Cursor key').fill(secret);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Save' }).click();
+      await openSettings(first.window);
       await first.window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
       await first.app.evaluate(({ dialog }, chosen: string) => {
         dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
       }, folder);
+      await openSettings(first.window);
       await first.window.getByRole('button', { name: 'Choose a folder' }).click();
+      await openSettings(first.window);
       await expect(first.window.getByText(folder)).toBeVisible();
     } finally {
       await first.app.close();
     }
     const second = await launchApp(userData, catalogFile, { BOOK_DISTILLER_SESSION: 'fail' });
     try {
+      await openSettings(second.window);
       await expect(second.window.getByText('The saved key could not be read.')).toBeVisible();
     } finally {
       await second.app.close();
@@ -390,7 +453,9 @@ test('a settings failure after the vault write leaves no key', async () => {
   await mkdir(userData);
   const first = await launchApp(userData, catalogFile, { BOOK_DISTILLER_SETTINGS_FAIL: '1' });
   try {
+    await openSettings(first.window);
     await first.window.getByLabel('Cursor key').fill(secret);
+    await openSettings(first.window);
     await first.window.getByRole('button', { name: 'Save' }).click();
     await expect(first.window.getByText('The key could not be saved.')).toBeVisible();
     await expect(first.window.getByRole('button', { name: 'Forget key' })).toHaveCount(0);
@@ -402,6 +467,7 @@ test('a settings failure after the vault write leaves no key', async () => {
     await expect
       .poll(() => second.window.evaluate(async () => (await window.bookDistiller.session()).hasKey))
       .toBe(false);
+    await openSettings(second.window);
     await expect(second.window.getByLabel('Cursor key')).toBeVisible();
     await expect(second.window.getByRole('button', { name: 'Forget key' })).toHaveCount(0);
   } finally {

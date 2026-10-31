@@ -4,6 +4,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { openSettings } from './boardLaunch';
 
 const require = createRequire(import.meta.url);
 const electronPath = require('electron') as string;
@@ -52,8 +53,11 @@ async function launchApp(
 }
 
 async function saveKeyAndModel(window: Page): Promise<void> {
+  await openSettings(window);
   await window.getByLabel('Cursor key').fill('cursor-test-key-alpha');
+  await openSettings(window);
   await window.getByRole('button', { name: 'Save' }).click();
+  await openSettings(window);
   await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
 }
 
@@ -61,14 +65,17 @@ async function chooseLaunchFolder(app: ElectronApplication, window: Page, folder
   await app.evaluate(({ dialog }, chosen: string) => {
     dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
   }, folder);
+  await openSettings(window);
   await window.getByRole('button', { name: 'Choose a folder' }).click();
 }
 
 async function openChecklist(app: ElectronApplication, window: Page, folder: string): Promise<void> {
   await saveKeyAndModel(window);
   await chooseLaunchFolder(app, window, folder);
+  await openSettings(window);
   await expect(window.getByText(folder)).toBeVisible();
   await window.getByRole('button', { name: 'Start' }).click();
+  await expect(window.getByRole('dialog', { name: 'Slices' })).toBeVisible();
 }
 
 async function dropPdf(window: Page, pdfPath: string, fileName: string): Promise<void> {
@@ -361,7 +368,7 @@ test('toggling a slice leaves the page range the slicer chose', async () => {
   }
 });
 
-test('confirm shows the first board in Study and creates a missing folder', async () => {
+test('confirm shows the first board in the viewer and creates a missing folder', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
   const notes = path.join(dir, 'notes');
   const agentFile = path.join(dir, 'agent.json');
@@ -406,6 +413,7 @@ test('confirm shows the first board in Study and creates a missing folder', asyn
     await window.locator('input[type=file]').setInputFiles(path.join(process.cwd(), 'fixtures/booklet.pdf'));
     await saveKeyAndModel(window);
     await chooseLaunchFolder(app, window, notes);
+    await openSettings(window);
     await expect(window.getByText(notes)).toBeVisible();
     await access(notes);
     await window.getByRole('button', { name: 'Start' }).click();
@@ -416,13 +424,14 @@ test('confirm shows the first board in Study and creates a missing folder', asyn
     await rows.nth(1).getByRole('checkbox').click();
     await expect(window.getByRole('button', { name: 'Confirm' })).toBeEnabled();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     const studied = window.getByRole('listitem');
     await expect(studied).toHaveCount(1);
     await expect(studied.nth(0)).toContainText('A numbered rule');
     await expect(studied.nth(0)).toContainText('2\u20132');
-    await expect(studied.nth(0)).toContainText('Flush the log before memory');
-    await expect(studied.nth(0)).toContainText('During the outage the log still held the write, and memory did not.');
+    await expect(studied.nth(0)).not.toContainText('Flush the log before memory');
+    await expect(window.getByText('Flush the log before memory')).toBeVisible();
+    await expect(window.getByText('During the outage the log still held the write, and memory did not.')).toBeVisible();
     expect(urls.filter((url) => url.startsWith('http://') || url.startsWith('https://'))).toEqual([]);
   } finally {
     await app.close();
@@ -461,11 +470,12 @@ test('a folder is refused unless it is empty or already this book', async () => 
 
     await chooseLaunchFolder(app, window, empty);
     await expect(window.getByText(refusal)).toHaveCount(0);
+    await openSettings(window);
     await expect(window.getByText(empty)).toBeVisible();
     await expect(start).toBeEnabled();
 
     await chooseLaunchFolder(app, window, book);
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByRole('button', { name: 'Confirm' })).toHaveCount(0);
     let log = '';
     try {

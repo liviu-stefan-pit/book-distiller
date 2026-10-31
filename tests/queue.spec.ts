@@ -50,7 +50,8 @@ test('a valid preface board is skipped while a later slice is still writing', as
     const listing = window.getByRole('listitem').filter({ hasText: 'A listing' });
     await expect(listing).toContainText('writing');
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
-    await expect(window.getByRole('button', { name: 'Launchpad' })).toHaveCount(0);
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
+    await expect(window.getByText('Drop a PDF')).toHaveCount(0);
     await window.getByRole('button', { name: 'Preface' }).click();
     await expect(window.getByText('Those pages had no technical content.', { exact: true })).toBeVisible();
     await expect(listing).toContainText('writing');
@@ -97,7 +98,8 @@ test('cancel stops the in-flight slice and leaves the finished board', async () 
     await expect(listing).toContainText('cancelled');
     await readFile(path.join(folder, 'boards', 'a-numbered-rule.board.json'), 'utf8');
     await expect(access(path.join(folder, 'boards', 'a-listing.board.json'))).rejects.toThrow();
-    await expect(window.getByRole('button', { name: 'Launchpad' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
+    await expect(window.getByText('Drop a PDF')).toHaveCount(0);
     await expect(window.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
   } finally {
     await app.close();
@@ -144,7 +146,7 @@ test('cancel after a valid reply drops that slice and leaves the next one queued
   }
 });
 
-test('cancel during the first slice leaves the rest queued and returns to the launchpad', async () => {
+test('cancel during the first slice leaves the rest queued on the viewer', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
   const agentFile = path.join(dir, 'agent.json');
   const agentLog = path.join(dir, 'agent.log');
@@ -166,8 +168,9 @@ test('cancel during the first slice leaves the rest queued and returns to the la
     await expect(access(path.join(folder, 'boards', 'preface.board.json'))).rejects.toThrow();
     await expect(window.getByRole('listitem').filter({ hasText: 'A numbered rule' })).toContainText('queued');
     await expect(window.getByRole('listitem').filter({ hasText: 'A listing' })).toContainText('queued');
-    await window.getByRole('button', { name: 'Launchpad' }).click();
-    await expect(window.getByText('Drop a PDF')).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
+    await expect(window.getByText('Drop a PDF')).toHaveCount(0);
+    await expect(window.getByText('Choose a PDF')).toHaveCount(0);
     let log = '';
     try {
       log = await readFile(agentLog, 'utf8');

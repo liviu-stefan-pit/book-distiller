@@ -27,7 +27,7 @@ test('confirm writes the checked numbered-rule slice', async () => {
   try {
     await window.getByRole('listitem').filter({ hasText: 'A listing' }).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByText('Flush the log before memory')).toBeVisible();
     await expect(window.getByText(example)).toBeVisible();
     await readFile(path.join(folder, 'boards', 'a-numbered-rule.board.json'), 'utf8');
@@ -147,7 +147,7 @@ test('two omitted listings fail the slice without a board or a note', async () =
   try {
     await window.getByRole('listitem').nth(1).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     const row = window.getByRole('listitem');
     await expect(row).toContainText('failed');
     await expect(row).toContainText('missing listing');
@@ -171,7 +171,7 @@ test('a wrong schema version fails the slice as shape', async () => {
   try {
     await window.getByRole('listitem').nth(2).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     const row = window.getByRole('listitem');
     await expect(row).toContainText('failed');
     await expect(row).toContainText('shape');
@@ -293,7 +293,7 @@ test('a point with only a kind fails as shape', async () => {
   try {
     await window.getByRole('listitem').nth(2).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     const row = window.getByRole('listitem');
     await expect(row).toContainText('failed');
     await expect(row).toContainText('shape');
@@ -332,7 +332,7 @@ test('a point kind outside the three kinds fails as shape', async () => {
   try {
     await window.getByRole('listitem').nth(2).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     const row = window.getByRole('listitem');
     await expect(row).toContainText('failed');
     await expect(row).toContainText('shape');
@@ -359,7 +359,7 @@ test('a code entry without a title fails as shape', async () => {
   try {
     await window.getByRole('listitem').nth(1).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     const row = window.getByRole('listitem');
     await expect(row).toContainText('failed');
     await expect(row).toContainText('shape');

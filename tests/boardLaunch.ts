@@ -9,6 +9,14 @@ const electronPath = require('electron') as string;
 export const secret = 'cursor-test-key-alpha';
 export const example = 'During the outage the log still held the write, and memory did not.';
 
+export async function openSettings(window: Page): Promise<void> {
+  const dialog = window.getByRole('dialog', { name: 'Settings' });
+  if (!(await dialog.isVisible())) {
+    await window.getByRole('button', { name: 'Settings' }).click();
+  }
+  await expect(dialog).toBeVisible();
+}
+
 export function numberedRuleBoard(): unknown {
   return {
     schemaVersion: 1,
@@ -53,15 +61,21 @@ export async function launchReady(
   const window = await app.firstWindow();
   await window.locator('input[type=file]').setInputFiles(path.join(process.cwd(), 'fixtures/booklet.pdf'));
   await expect(window.getByText('Distiller Booklet')).toBeVisible();
+  await openSettings(window);
   await window.getByLabel('Cursor key').fill(secret);
+  await openSettings(window);
   await window.getByRole('button', { name: 'Save' }).click();
+  await openSettings(window);
   await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
   await app.evaluate(({ dialog }, chosen: string) => {
     dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
   }, folder);
+  await openSettings(window);
   await window.getByRole('button', { name: 'Choose a folder' }).click();
+  await openSettings(window);
   await expect(window.getByText(folder)).toBeVisible();
   await window.getByRole('button', { name: 'Start' }).click();
+  await expect(window.getByRole('dialog', { name: 'Slices' })).toBeVisible();
   await expect(window.getByRole('button', { name: 'Confirm' })).toBeEnabled();
   return { app, window, folder };
 }

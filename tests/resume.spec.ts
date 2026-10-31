@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { numberedRuleBoard, secret } from './boardLaunch';
+import { numberedRuleBoard, openSettings, secret } from './boardLaunch';
 
 const require = createRequire(import.meta.url);
 const electronPath = require('electron') as string;
@@ -36,6 +36,7 @@ async function chooseFolder(app: ElectronApplication, window: Page, folder: stri
   await app.evaluate(({ dialog }, chosen: string) => {
     dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
   }, folder);
+  await openSettings(window);
   await window.getByRole('button', { name: 'Choose a folder' }).click();
 }
 
@@ -100,8 +101,11 @@ function prefaceBoard(): unknown {
 }
 
 async function saveKey(window: Page): Promise<void> {
+  await openSettings(window);
   await window.getByLabel('Cursor key').fill(secret);
+  await openSettings(window);
   await window.getByRole('button', { name: 'Save' }).click();
+  await openSettings(window);
   await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
 }
 
@@ -121,7 +125,7 @@ test('reopen without a call', async () => {
   try {
     await expect(window.getByText('Choose a PDF')).toBeVisible();
     await chooseFolder(app, window, folder);
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
     await expect(window.getByRole('listitem').filter({ hasText: 'A numbered rule' })).toContainText('done');
     await expect(window.getByRole('listitem').filter({ hasText: 'A numbered rule' }).getByRole('checkbox')).toHaveCount(0);
@@ -167,7 +171,7 @@ test('Continue picks up the failed slice', async () => {
     await expect(window.getByText('Choose a PDF')).toBeVisible();
     await saveKey(window);
     await chooseFolder(app, window, folder);
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await window.getByRole('listitem').filter({ hasText: 'A listing' }).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Continue' }).click();
     await expect(window.getByRole('listitem').filter({ hasText: 'Preface' })).toContainText('done');
@@ -386,9 +390,10 @@ test('a bad schema is refused and a schema-2 board is not done', async () => {
     await expect(window.getByText('Choose a PDF')).toBeVisible();
     await chooseFolder(app, window, badManifest);
     await expect(window.getByText('This book folder could not be read.')).toBeVisible();
-    await expect(window.getByRole('heading', { name: 'Study' })).toHaveCount(0);
+    await expect(window.getByRole('region', { name: 'Viewer' })).toHaveCount(0);
+    await expect(window.getByText('Choose a PDF')).toBeVisible();
     await chooseFolder(app, window, badBoard);
-    await expect(window.getByRole('heading', { name: 'Study' })).toBeVisible();
+    await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByRole('listitem').filter({ hasText: 'A numbered rule' })).not.toContainText('done');
     expect(JSON.parse(await readFile(boardPath, 'utf8')).schemaVersion).toBe(2);
   } finally {

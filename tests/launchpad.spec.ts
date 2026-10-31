@@ -37,6 +37,24 @@ async function dropPdf(window: Page, pdfPath: string, fileName: string): Promise
   );
 }
 
+test('the drop target is a tall well', async () => {
+  const { app, window } = await launchApp();
+  try {
+    await expect(window.getByText('Drop a PDF')).toBeVisible();
+    const height = await window.evaluate(() => {
+      const label = [...document.querySelectorAll('body *')].find((element) => element.textContent === 'Drop a PDF');
+      const target = label?.closest('.drop') ?? null;
+      if (!target) {
+        throw new Error('missing drop target');
+      }
+      return target.getBoundingClientRect().height;
+    });
+    expect(height).toBeGreaterThanOrEqual(160);
+  } finally {
+    await app.close();
+  }
+});
+
 test('dropping the booklet shows its title and page count', async () => {
   const { app, window } = await launchApp();
   try {
@@ -90,15 +108,20 @@ test('choosing the booklet shows its title and page count', async () => {
   }
 });
 
-test('starting the app opens one dark English launchpad', async () => {
+test('starting the app opens one English drop zone', async () => {
   const { app, window } = await launchApp();
   try {
     expect(app.windows()).toHaveLength(1);
     await expect(window.locator('html')).toHaveAttribute('lang', 'en');
     await expect(window).toHaveTitle('Book Distiller');
     await expect(window.getByText('Drop a PDF')).toBeVisible();
-    const background = await window.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    expect(background).toBe('rgb(22, 29, 34)');
+    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByRole('button', { name: 'Start' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'Settings' })).toBeVisible();
+    await expect(window.getByLabel('Cursor key')).toHaveCount(0);
+    await expect(window.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: 'Choose a folder' })).toHaveCount(0);
+    await expect(window.getByRole('region', { name: 'Viewer' })).toHaveCount(0);
   } finally {
     await app.close();
   }

@@ -18,6 +18,10 @@ export interface BookDistillerApi {
   distill: (input: DistillInput) => Promise<DistillResult>;
   redo: (input: DistillInput, sectionId: string) => Promise<RedoResult>;
   cancelDistill: () => Promise<void>;
+  minimizeWindow: () => void;
+  toggleMaximizeWindow: () => void;
+  closeWindow: () => void;
+  onMaximized: (listener: (maximized: boolean) => void) => () => void;
   onDistillProgress: (listener: (slices: DistillSlice[]) => void) => () => void;
 }
 

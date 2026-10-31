@@ -15,7 +15,11 @@ function createWindow(): void {
   const window = new BrowserWindow({
     width: 960,
     height: 720,
-    backgroundColor: '#161D22',
+    backgroundColor: '#09090b',
+    roundedCorners: true,
+    frame: false,
+    thickFrame: true,
+    resizable: true,
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -24,6 +28,12 @@ function createWindow(): void {
       sandbox: true,
     },
   });
+
+  const tellMaximized = (maximized: boolean): void => {
+    window.webContents.send('window-maximized', maximized);
+  };
+  window.on('maximize', () => tellMaximized(true));
+  window.on('unmaximize', () => tellMaximized(false));
 
   void window.loadFile(join(import.meta.dirname, '../renderer/index.html'));
 }
@@ -62,6 +72,23 @@ void app.whenReady().then(() => {
   );
   ipcMain.handle('cancel-distill', () => {
     requestCancel();
+  });
+  ipcMain.on('window-minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.on('window-toggle-maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      return;
+    }
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+  });
+  ipcMain.on('window-close', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
   });
   createWindow();
 });
