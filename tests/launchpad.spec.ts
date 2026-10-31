@@ -98,7 +98,7 @@ test('starting the app opens one dark English launchpad', async () => {
     await expect(window).toHaveTitle('Book Distiller');
     await expect(window.getByText('Drop a PDF')).toBeVisible();
     const background = await window.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    expect(background).toBe('rgb(18, 18, 18)');
+    expect(background).toBe('rgb(22, 29, 34)');
   } finally {
     await app.close();
   }

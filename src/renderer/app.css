@@ -3,9 +3,13 @@ body,
 #root {
   margin: 0;
   height: 100%;
-  background: #121212;
-  color: #f2f2f2;
+  background: #161D22;
+  color: #E7E2D6;
   font-family: "Segoe UI", sans-serif;
+}
+
+h1 {
+  color: #EBCB8B;
 }
 
 label {
@@ -16,4 +20,49 @@ label {
 input {
   display: block;
   margin-top: 8px;
+  background: #243038;
+  color: #E7E2D6;
+  border-color: #88C0D0;
+}
+
+input[type='checkbox'] {
+  display: inline-block;
+  margin: 0 8px 0 0;
+}
+
+button {
+  margin-top: 16px;
+  margin-right: 8px;
+  background: #243038;
+  color: #E7E2D6;
+  border-color: #88C0D0;
+}
+
+input:focus,
+button:focus {
+  outline: 1px solid #88C0D0;
+}
+
+.notice {
+  color: #D08770;
+}
+
+ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+li {
+  margin: 8px 0;
+}
+
+.drawer {
+  margin-top: 16px;
+  width: 100%;
+}
+
+.drawer canvas {
+  display: block;
+  width: 100%;
+  height: auto;
 }
