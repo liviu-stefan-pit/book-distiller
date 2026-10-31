@@ -10,7 +10,7 @@ The reader wants each small section as a board: every technical point still ther
 
 ## Solution
 
-A local Electron app. The reader drops one PDF, chooses a folder, saves a Cursor key, picks one model, and confirms which slices to run. The app slices the book locally, sends one slice of text at a time to a Cursor agent, and keeps a board file only when it matches the board shape. The viewer shows the first accepted board while later slices run. Closing the app keeps every accepted board. Opening the folder again shows them and spends nothing until the reader presses Continue.
+A local Electron app. The reader drops one PDF, chooses an output folder, saves a Cursor key, picks one model, and confirms which slices to run. The app slices the book locally, sends one slice of text at a time to a Cursor agent, and keeps a board file only when it matches the board shape. The viewer shows the first accepted board while later slices run. Closing the app keeps every accepted board inside a folder named after the book. Opening that book folder again shows them and spends nothing until the reader presses Continue.
 
 ## Terms
 
@@ -20,10 +20,10 @@ A local Electron app. The reader drops one PDF, chooses a folder, saves a Cursor
 - **Mechanics.** Every other technical point in the slice.
 - **Useful later.** A niche case the reader does not need today.
 - **Listing.** A run of lines the PDF draws in a monospace font.
-- **Book folder.** The output folder for one PDF. It is the record.
+- **Book folder.** The folder named after one book, inside the output folder. It is the record. When the output folder is already that PDF’s book, the files stay in the output folder.
 - **Manifest.** The index of that folder. A slice is done because its board file validates, and the app can rewrite the manifest from the board files and the PDF.
 - **Note.** The markdown rendering of one board, written when that board is accepted.
-- **Launchpad.** The screen before a run: a drop zone and one Start button. The key, the model, and the folder are inside a Settings popup.
+- **Launchpad.** The screen before a run: a drop zone, Open book, and one Start button. The key, the model, and the output folder are inside a Settings popup.
 - **Study.** The viewer region on the same window during and after a run: slice list, board, page drawer.
 
 A **page** is the PDF page index. The printed folio in the corner is ignored. The number on a claim and the page the drawer opens are the same number.
@@ -43,8 +43,8 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 11. As a reader, I want pages that sit in no outline entry to appear as “Pages a–b” slices that start unchecked, so that stray pages are visible and unspent.
 12. As a reader, I want a PDF with no outline to become tiled 4-page windows, last window shorter, so that a book without bookmarks still slices.
 13. As a reader, I want a window whose text begins with an English front-matter title to start unchecked, so that an outline-less preface is skipped the same way.
-14. As a reader, I want to choose an output folder, and have a missing folder created, so that the boards land where I keep notes.
-15. As a reader, I want a folder refused unless it is empty or already this PDF’s book folder, so that a run cannot dump files into an unrelated directory.
+14. As a reader, I want to choose an output folder, and have a missing folder created, so that each book is saved in a folder named after the book.
+15. As a reader, I want a folder that is already a book to open in the viewer, and any other folder to be the output folder, so that I can keep many books in one place. An unreadable book folder is refused.
 16. As a reader, I want to paste a Cursor key and see the models that key can use, so that I pick the model for the run.
 17. As a reader, I want a key stored only after Cursor returns that catalog, so that a bad key is never saved.
 18. As a reader, I want the key in Windows Credential Manager, so that other Windows accounts on the PC cannot read it.
@@ -68,7 +68,7 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 36. As a reader, I want a slice with no technical content to become a valid empty board, so that the queue moves on and the viewer says those pages had no technical content.
 37. As a reader, I want a board file and a note on disk as soon as the board is accepted, so that a crash keeps what I already paid for.
 38. As a reader, I want an existing valid board skipped on the next run, so that I do not pay twice.
-39. As a reader, I want to open a book folder and see the viewer without a model call, so that browsing past work is free.
+39. As a reader, I want to open a book folder from the launchpad and see the viewer without a model call, so that browsing past work is free.
 40. As a reader, I want Continue, when the queue is idle, to run every checked slice that is missing or failed, so that I finish the book on purpose.
 41. As a reader, I want checkboxes on slices that are not done, so that I can skip a remaining slice before Continue.
 42. As a reader, I want Redo, when the queue is idle, to keep the current board up until the new one validates, so that a failed redo leaves the old board.
@@ -87,7 +87,7 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 - Slice text is PDF.js text in engine order. Each page is stamped `--- PAGE N ---` using the PDF page index. v1 does no column reordering and no hyphen repair.
 - A listing is a run of lines whose PDF.js font-family hint is monospace. Those listings are required on the board.
 - Slicing uses the PDF outline when it exists. A heading of 6 pages or fewer is one slice. A longer heading splits on child outline entries, then into consecutive chunks of 6 pages, last chunk shorter. Pages in no outline entry become slices titled “Pages a–b”, at most 6 pages, starting unchecked. With no outline, slices are tiled 4-page windows labeled as page windows, last window shorter. A window starts unchecked when its text begins with one of the English front-matter titles listed in the user stories. Other windows start checked.
-- The PDF is chosen by drop or by a file chooser. The output folder is chosen by a folder chooser. A missing folder is created. Any other existing folder is refused with a short message unless it is already this PDF’s book folder.
+- The PDF is chosen by drop or by a file chooser. The output folder is chosen by a folder chooser. A missing folder is created. A folder that already holds a readable book manifest opens that book and does not replace the output folder. Any other folder is the output folder, even when it already holds files. An unreadable manifest is refused.
 - Start opens the slice checklist as a sheet, and Confirm on that sheet starts the queue. The checklist itself is local. While the queue runs, the viewer stays on the same window.
 - Each slice runs in its own agent workspace that holds the slice text and the board instructions. The app copies a board into the book folder only after validation. The key and the other boards stay outside that workspace.
 - The queue is serial. A rejected board is tried once automatically. A second rejection marks the slice failed. The short reason is one of: shape, missing listing, network, cancelled. Cancel stops the queue. A network failure uses the same failed state.
@@ -95,13 +95,14 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 - A point has exactly one kind: `must-remember`, `mechanics`, or `useful-later`.
 - Validation rejects a board when `schemaVersion` is missing or not `1`, when any page falls outside the slice, or when a required listing is absent after whitespace is collapsed. A real code difference still rejects the board. A board with no points and no code is valid when the slicer found no listings.
 - Redo and Continue are available when the queue is idle. Redo uses the model selected now. The previous board stays in place until the replacement validates.
-- Opening a book folder shows the viewer and does not call the agent. Done slices are the ones whose board file exists and validates. Missing and failed slices that are still checked are what Continue runs. Unchecking a slice that has no board skips it. Unchecking a slice that already has a board leaves that board.
+- On confirm, the app writes into a book folder inside the output folder. The book folder’s name is the PDF title, or the file name when the PDF has no title. Characters that Windows rejects in a folder name are replaced, and a blank name becomes Book. A child folder whose manifest points at this PDF is reused. If the name is taken by a different book or by unrelated files, the next free name is Title (2), Title (3), and so on. If the output folder itself is already this PDF’s book, the files stay there. The manifest is written when the run starts, before the first model call.
+- Opening a book folder from the launchpad, or choosing one in Settings, shows the viewer and does not call the agent. Done slices are the ones whose board file exists and validates. Missing and failed slices that are still checked are what Continue runs. Unchecking a slice that has no board skips it. Unchecking a slice that already has a board leaves that board.
 - The book folder looks like this:
 
 ```text
-book-manifest.json
-boards/<sectionId>.board.json
-notes/<sectionId>.md
+<book name>/book-manifest.json
+<book name>/boards/<sectionId>.board.json
+<book name>/notes/<sectionId>.md
 ```
 
 - `sectionId` is a slug of the heading: lowercase, hyphen-separated. When two headings would share a slug, the start page is added. The manifest stores `schemaVersion`, the PDF path, the title, and each slice’s id, title, page range, checked state, status, model id when a board was accepted, and the failure reason when it failed. The app may rewrite the manifest from the board files and the PDF. The note is written only when a board is accepted, in viewer order, with page numbers, and it contains nothing the board does not contain. The PDF file is not copied. A missing PDF leaves the boards readable and the drawer says the PDF is missing.

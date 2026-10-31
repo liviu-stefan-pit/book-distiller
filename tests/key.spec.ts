@@ -183,13 +183,16 @@ test('start stays off until the pdf, key, model, and folder are set', async () =
   const userData = path.join(dir, 'user-data');
   const occupied = path.join(dir, 'occupied');
   const empty = path.join(dir, 'empty');
+  const broken = path.join(dir, 'broken');
   await mkdir(userData);
   await mkdir(occupied);
   await writeFile(path.join(occupied, 'notes.txt'), 'hello');
   await mkdir(empty);
+  await mkdir(broken);
+  await writeFile(path.join(broken, 'book-manifest.json'), '{');
   const { app, window } = await launchApp(userData, catalogFile);
   const start = window.getByRole('button', { name: 'Start' });
-  const refusal = "Choose an empty folder or this book's folder.";
+  const unreadable = 'This book folder could not be read.';
   try {
     await expect(start).toBeDisabled();
     await window.locator('input[type=file]').setInputFiles(path.join(process.cwd(), 'fixtures/booklet.pdf'));
@@ -215,17 +218,9 @@ test('start stays off until the pdf, key, model, and folder are set', async () =
     }, occupied);
     await openSettings(window);
     await window.getByRole('button', { name: 'Choose a folder' }).click();
-    await expect(window.getByText(refusal)).toBeVisible();
-    await expect(start).toBeDisabled();
-
-    await app.evaluate(({ dialog }, chosen: string) => {
-      dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
-    }, empty);
+    await expect(window.getByText(unreadable)).toHaveCount(0);
     await openSettings(window);
-    await window.getByRole('button', { name: 'Choose a folder' }).click();
-    await expect(window.getByText(refusal)).toHaveCount(0);
-    await openSettings(window);
-    await expect(window.getByText(empty)).toBeVisible();
+    await expect(window.getByText(occupied)).toBeVisible();
     await expect(start).toBeDisabled();
 
     await openSettings(window);
@@ -234,10 +229,10 @@ test('start stays off until the pdf, key, model, and folder are set', async () =
 
     await app.evaluate(({ dialog }, chosen: string) => {
       dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
-    }, occupied);
+    }, broken);
     await openSettings(window);
     await window.getByRole('button', { name: 'Choose a folder' }).click();
-    await expect(window.getByText(refusal)).toBeVisible();
+    await expect(window.getByText(unreadable)).toBeVisible();
     await expect(start).toBeDisabled();
   } finally {
     await app.close();

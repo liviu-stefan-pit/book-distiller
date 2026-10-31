@@ -50,6 +50,8 @@ test('a valid preface board is skipped while a later slice is still writing', as
     const listing = window.getByRole('listitem').filter({ hasText: 'A listing' });
     await expect(listing).toContainText('writing');
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
+    await expect(window.getByRole('status')).toContainText('Writing A listing');
+    await expect.poll(async () => window.getByRole('status').innerText()).toContain('again');
     await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByText('Drop a PDF')).toHaveCount(0);
     await window.getByRole('button', { name: 'Preface' }).click();
@@ -74,6 +76,7 @@ test('a valid preface board is skipped while a later slice is still writing', as
     expect(stored['a-numbered-rule']?.modelId).toBe('north-model');
     expect(stored['a-listing']?.status).toBe('failed');
     expect(stored['a-listing']?.failureReason).toBe('shape');
+    expect(manifest.slices.some((slice) => 'attempt' in slice)).toBe(false);
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });
@@ -162,6 +165,21 @@ test('cancel during the first slice leaves the rest queued on the viewer', async
     await window.getByRole('button', { name: 'Confirm' }).click();
     const preface = window.getByRole('listitem').filter({ hasText: 'Preface' });
     await expect(preface).toContainText('writing');
+    const run = window.getByRole('status');
+    await expect(run).toContainText('Writing Preface, page 1');
+    await expect(run).toContainText('0 of 3');
+    await expect(window.getByText('The board opens here when this section is ready.')).toBeVisible();
+    const titleBox = await preface.getByRole('button', { name: 'Preface' }).evaluate((button) => {
+      const status = button.closest('li')?.querySelector('.status');
+      if (!(status instanceof HTMLElement)) {
+        throw new Error('missing status');
+      }
+      const title = button.getBoundingClientRect();
+      const label = status.getBoundingClientRect();
+      return { width: title.width, bottom: title.bottom, statusTop: label.top };
+    });
+    expect(titleBox.width).toBeGreaterThan(120);
+    expect(titleBox.bottom).toBeLessThanOrEqual(titleBox.statusTop);
     await window.getByRole('button', { name: 'Cancel' }).click();
     await expect(preface).toContainText('failed');
     await expect(preface).toContainText('cancelled');

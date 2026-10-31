@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('bookDistiller', {
     ipcRenderer.invoke('inspect-pdf', data, fileName, pdfPath),
   slicePdf: (data: Uint8Array): Promise<Slice[]> => ipcRenderer.invoke('slice-pdf', data),
   chooseFolder: (): Promise<FolderChoice> => ipcRenderer.invoke('choose-folder'),
+  chooseBook: (): Promise<FolderChoice> => ipcRenderer.invoke('choose-book'),
+  resolveBookFolder: (outputPath: string, pdfPath: string, title: string): Promise<string> =>
+    ipcRenderer.invoke('resolve-book-folder', outputPath, pdfPath, title),
   saveKey: (apiKey: string): Promise<SaveKeyResult> => ipcRenderer.invoke('save-key', apiKey),
   forgetKey: (): Promise<void> => ipcRenderer.invoke('forget-key'),
   session: (): Promise<Session> => ipcRenderer.invoke('session'),

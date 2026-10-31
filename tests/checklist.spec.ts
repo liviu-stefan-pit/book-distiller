@@ -133,7 +133,7 @@ function addTextPages(doc: PdfDoc, count: number, text: string): void {
 
 async function expectSlice(row: Locator, title: string, start: number, end: number, checked: boolean): Promise<void> {
   await expect(row).toContainText(title);
-  await expect(row).toContainText(`${start}\u2013${end}`);
+  await expect(row.locator('span')).toHaveText(start === end ? `${start}` : `${start}\u2013${end}`);
   const box = row.getByRole('checkbox');
   if (checked) {
     await expect(box).toBeChecked();
@@ -428,7 +428,7 @@ test('confirm shows the first board in the viewer and creates a missing folder',
     const studied = window.getByRole('listitem');
     await expect(studied).toHaveCount(1);
     await expect(studied.nth(0)).toContainText('A numbered rule');
-    await expect(studied.nth(0)).toContainText('2\u20132');
+    await expect(studied.nth(0).locator('.range')).toHaveText('2');
     await expect(studied.nth(0)).not.toContainText('Flush the log before memory');
     await expect(window.getByText('Flush the log before memory')).toBeVisible();
     await expect(window.getByText('During the outage the log still held the write, and memory did not.')).toBeVisible();
@@ -439,19 +439,81 @@ test('confirm shows the first board in the viewer and creates a missing folder',
   }
 });
 
-test('a folder is refused unless it is empty or already this book', async () => {
+test('a long outline stays inside the window and scrolls', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const { app, window, folder } = await launchApp(dir);
+  try {
+    const pdfPath = path.join(dir, 'long.pdf');
+    await writePdf(pdfPath, (doc) => {
+      for (let index = 0; index < 40; index += 1) {
+        if (index > 0) {
+          doc.addPage();
+        }
+        doc.outline.addItem(`Section ${index + 1}`);
+        writePage(doc);
+      }
+    });
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setContentSize(520, 420);
+    });
+    await expect.poll(() => window.evaluate(() => window.innerHeight)).toBeLessThanOrEqual(420);
+    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await window.locator('input[type=file]').setInputFiles(pdfPath);
+    await openChecklist(app, window, folder);
+
+    const dialog = window.getByRole('dialog', { name: 'Slices' });
+    const confirm = dialog.getByRole('button', { name: 'Confirm' });
+    const rows = dialog.getByRole('listitem');
+    await expect(rows).toHaveCount(40);
+
+    const insideWindow = async (locator: Locator): Promise<void> => {
+      const box = await locator.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+      });
+      const size = await window.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+      expect(box.left).toBeGreaterThanOrEqual(-1);
+      expect(box.top).toBeGreaterThanOrEqual(-1);
+      expect(box.right).toBeLessThanOrEqual(size.width + 1);
+      expect(box.bottom).toBeLessThanOrEqual(size.height + 1);
+    };
+
+    await insideWindow(dialog);
+    await insideWindow(confirm);
+    expect(
+      await dialog.locator('.checklist').evaluate((element) => element.scrollHeight > element.clientHeight + 1),
+    ).toBe(true);
+
+    const last = rows.nth(39);
+    const height = await window.evaluate(() => window.innerHeight);
+    expect(await last.evaluate((element) => element.getBoundingClientRect().top)).toBeGreaterThanOrEqual(height);
+
+    await last.scrollIntoViewIfNeeded();
+    await insideWindow(dialog);
+    await insideWindow(confirm);
+    const after = await last.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    });
+    expect(after.top).toBeGreaterThanOrEqual(-1);
+    expect(after.bottom).toBeLessThanOrEqual((await window.evaluate(() => window.innerHeight)) + 1);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a non-empty folder is the output and this book opens', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
   const occupied = path.join(dir, 'occupied');
-  const empty = path.join(dir, 'empty');
   const book = path.join(dir, 'book');
   const booklet = path.resolve(process.cwd(), 'fixtures/booklet.pdf');
   await mkdir(occupied);
   await writeFile(path.join(occupied, 'notes.txt'), 'hello');
-  await mkdir(empty);
   await mkdir(book);
   await writeFile(
     path.join(book, 'book-manifest.json'),
-    JSON.stringify({ schemaVersion: 1, pdfPath: booklet }),
+    JSON.stringify({ schemaVersion: 1, pdfPath: booklet, title: 'Distiller Booklet', slices: [] }),
   );
   await writeFile(path.join(book, 'extra.txt'), 'kept');
   const agentLog = path.join(dir, 'agent.log');
@@ -462,16 +524,10 @@ test('a folder is refused unless it is empty or already this book', async () => 
     await window.locator('input[type=file]').setInputFiles(booklet);
     await saveKeyAndModel(window);
     await expect(start).toBeDisabled();
-    const refusal = "Choose an empty folder or this book's folder.";
 
     await chooseLaunchFolder(app, window, occupied);
-    await expect(window.getByText(refusal)).toBeVisible();
-    await expect(start).toBeDisabled();
-
-    await chooseLaunchFolder(app, window, empty);
-    await expect(window.getByText(refusal)).toHaveCount(0);
     await openSettings(window);
-    await expect(window.getByText(empty)).toBeVisible();
+    await expect(window.getByText(occupied)).toBeVisible();
     await expect(start).toBeEnabled();
 
     await chooseLaunchFolder(app, window, book);

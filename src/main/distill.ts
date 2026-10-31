@@ -48,6 +48,7 @@ export type DistillSlice = {
   pageEnd: number;
   checked: boolean;
   status: 'queued' | 'writing' | 'done' | 'failed';
+  attempt?: number;
   modelId?: string;
   failureReason?: string;
   board?: Board;
@@ -773,6 +774,8 @@ export async function distillQueue(
   const notify = (): void => {
     onProgress(slices.map((slice) => ({ ...slice })));
   };
+  await mkdir(input.folderPath, { recursive: true });
+  await writeManifest(input, slices);
   for (const target of slices) {
     if (!target.checked || target.status === 'done') {
       continue;
@@ -793,6 +796,7 @@ export async function distillQueue(
       continue;
     }
     target.status = 'writing';
+    target.attempt = 1;
     notify();
     const workspace = await prepareWorkspace(target.id, read.text);
     try {
@@ -826,10 +830,13 @@ export async function distillQueue(
       };
       let outcome = await ask();
       if (!('board' in outcome) && outcome.failure !== 'cancelled') {
+        target.attempt = 2;
+        notify();
         outcome = await ask();
       }
       if (!('board' in outcome)) {
         target.status = 'failed';
+        delete target.attempt;
         target.failureReason = outcome.failure;
         await writeManifest(input, slices);
         notify();
@@ -839,6 +846,7 @@ export async function distillQueue(
         continue;
       }
       target.status = 'done';
+      delete target.attempt;
       target.modelId = input.modelId;
       target.board = outcome.board;
       await writeAccepted(input, slices, target.id, outcome.board);

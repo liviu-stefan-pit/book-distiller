@@ -337,6 +337,7 @@ test('cancel during redo keeps the open board and shows cancelled', async () => 
         }
       })
       .toContain('"sectionId":"a-numbered-rule"');
+    await expect(window.getByRole('status')).toContainText('Writing A numbered rule again');
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible({
       timeout: 1000,
     });

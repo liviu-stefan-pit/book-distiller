@@ -138,7 +138,7 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
-.home > .primary {
+.home > button {
   align-self: flex-start;
 }
 
@@ -255,6 +255,11 @@ button.primary:hover:not(:disabled) {
   width: min(22rem, calc(100% - 24px));
 }
 
+.overlay:not(.settings-flyout) .sheet {
+  max-height: calc(100% - 32px);
+  min-height: 0;
+}
+
 .window-controls {
   display: flex;
   align-self: stretch;
@@ -350,6 +355,7 @@ button.primary:hover:not(:disabled) {
 
 .sheet > button.primary {
   align-self: flex-end;
+  flex-shrink: 0;
 }
 
 .sheet label {
@@ -374,17 +380,62 @@ button.primary:hover:not(:disabled) {
   flex-direction: column;
 }
 
+.run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.run p {
+  font-size: 13px;
+}
+
+.run .count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.run progress {
+  flex-basis: 100%;
+  width: 100%;
+  height: 4px;
+  margin: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--text);
+  appearance: none;
+}
+
+.run progress::-webkit-progress-bar {
+  background: var(--surface);
+  border-radius: 2px;
+}
+
+.run progress::-webkit-progress-value {
+  background: var(--text);
+  border-radius: 2px;
+}
+
+.run progress::-moz-progress-bar {
+  background: var(--text);
+  border-radius: 2px;
+}
+
 .workspace {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   background: var(--bg);
 }
 
 .workspace.with-page {
-  grid-template-columns: 240px minmax(0, 1fr) minmax(280px, 36%);
+  grid-template-columns: 280px minmax(0, 1fr) minmax(280px, 36%);
 }
 
 .workspace > ul {
@@ -407,10 +458,19 @@ button.primary:hover:not(:disabled) {
 
 .workspace li {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) 5.5rem auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  column-gap: 8px;
+  row-gap: 2px;
   min-height: 32px;
+}
+
+.workspace li:has(input) {
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 8px;
+}
+
+.workspace li.is-writing {
+  box-shadow: inset 2px 0 0 var(--text);
 }
 
 .workspace li.is-open,
@@ -420,10 +480,15 @@ button.primary:hover:not(:disabled) {
 
 .workspace li input {
   grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 3px;
 }
 
 .workspace li button {
-  grid-column: 2;
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
   min-width: 0;
   height: auto;
   margin: 0;
@@ -438,17 +503,40 @@ button.primary:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.workspace li:has(input) button,
+.workspace li:has(input) .meta {
+  grid-column: 2;
+}
+
+.meta {
+  grid-row: 2;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .workspace li button:hover {
   background: transparent;
 }
 
 .range {
-  grid-column: 3;
-  text-align: right;
   white-space: nowrap;
   color: var(--text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.waiting {
+  max-width: 42rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.waiting p:last-child {
+  color: var(--text-muted);
 }
 
 .reading {
@@ -539,7 +627,9 @@ button.primary:hover:not(:disabled) {
   width: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   background: transparent;
   border: 0;
 }
@@ -605,9 +695,7 @@ button:focus-visible {
 }
 
 .status {
-  grid-column: 4;
-  justify-self: end;
-  margin: 0;
+  margin: 0 0 0 auto;
   padding: 0;
   border: 0;
   background: none;

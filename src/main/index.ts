@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
-import { chooseBookFolder } from './bookFolder';
+import { chooseExistingBook, chooseOutputFolder, resolveBookFolder } from './bookFolder';
 import { forgetCursorKey, loadSession, rememberFolder, rememberModel, saveCursorKey } from './cursorKey';
 import { distillQueue, openBook, redoSlice, requestCancel, writeChecks, type DistillInput } from './distill';
 import { inspectPdf } from './inspectPdf';
@@ -39,14 +39,10 @@ function createWindow(): void {
 }
 
 void app.whenReady().then(() => {
-  let openPdfPath = '';
-  ipcMain.handle('inspect-pdf', (_event, data: Uint8Array, fileName: string, pdfPath: string) => {
-    openPdfPath = pdfPath;
-    return inspectPdf(data, fileName);
-  });
+  ipcMain.handle('inspect-pdf', (_event, data: Uint8Array, fileName: string) => inspectPdf(data, fileName));
   ipcMain.handle('slice-pdf', (_event, data: Uint8Array) => slicePdf(data));
   ipcMain.handle('choose-folder', async () => {
-    const choice = await chooseBookFolder(openPdfPath);
+    const choice = await chooseOutputFolder();
     if (choice.status === 'chosen') {
       await rememberFolder(choice.folderPath);
     } else if (choice.status === 'refused') {
@@ -54,6 +50,10 @@ void app.whenReady().then(() => {
     }
     return choice;
   });
+  ipcMain.handle('choose-book', () => chooseExistingBook());
+  ipcMain.handle('resolve-book-folder', (_event, outputPath: string, pdfPath: string, title: string) =>
+    resolveBookFolder(outputPath, pdfPath, title),
+  );
   ipcMain.handle('save-key', (_event, apiKey: string) => saveCursorKey(apiKey));
   ipcMain.handle('forget-key', () => forgetCursorKey());
   ipcMain.handle('session', () => loadSession());

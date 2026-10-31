@@ -4,7 +4,31 @@ import type { PdfDecision } from '../main/inspectPdf';
 import type { Slice } from '../main/slicePdf';
 
 function pageRange(start: number, end: number): string {
+  if (start === end) {
+    return `${start}`;
+  }
   return `${start}\u2013${end}`;
+}
+
+function pagePhrase(start: number, end: number): string {
+  if (start === end) {
+    return `page ${start}`;
+  }
+  return `pages ${start}\u2013${end}`;
+}
+
+function writingLine(slice: DistillSlice): string {
+  const again = slice.attempt === 2 ? ' again' : '';
+  return `Writing ${slice.title}${again}, ${pagePhrase(slice.pageStart, slice.pageEnd)}`;
+}
+
+function unfinishedLine(done: number, failed: number, left: number): string {
+  const parts = [
+    done > 0 ? `${done} done` : '',
+    failed > 0 ? `${failed} failed` : '',
+    left > 0 ? `${left} left` : '',
+  ].filter((part) => part !== '');
+  return parts.join(' \u00b7 ');
 }
 
 const pointKinds = [
@@ -162,7 +186,9 @@ export function App() {
   const [drawer, setDrawer] = useState<{ page: number; pageStart: number; pageEnd: number } | null>(null);
   const [slices, setSlices] = useState<Slice[]>([]);
   const [folderPath, setFolderPath] = useState('');
+  const [bookPath, setBookPath] = useState('');
   const [folderMessage, setFolderMessage] = useState('');
+  const [openMessage, setOpenMessage] = useState('');
   const [draftKey, setDraftKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
   const [modelIds, setModelIds] = useState<string[]>([]);
@@ -175,6 +201,7 @@ export function App() {
   const [showMissingPdf, setShowMissingPdf] = useState(false);
   const [screen, setScreen] = useState<'launchpad' | 'checklist' | 'study'>('launchpad');
   const [queueRunning, setQueueRunning] = useState(false);
+  const [queueKind, setQueueKind] = useState<'run' | 'redo' | null>(null);
   const [redoFailure, setRedoFailure] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -183,10 +210,30 @@ export function App() {
   const keyLocked = useRef(false);
   const folderChosen = useRef(false);
   const picked = useRef(false);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const settingsPanel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return window.bookDistiller.onMaximized(setMaximized);
   }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      return;
+    }
+    const closeOnOutside = (event: PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (settingsPanel.current?.contains(target) || settingsButton.current?.contains(target)) {
+        return;
+      }
+      setSettingsOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutside);
+    return () => document.removeEventListener('pointerdown', closeOnOutside);
+  }, [settingsOpen]);
 
   useEffect(() => {
     let current = true;
@@ -234,6 +281,14 @@ export function App() {
     });
   }, []);
 
+  const writingId = study.find((slice) => slice.status === 'writing')?.id;
+  useEffect(() => {
+    if (!writingId) {
+      return;
+    }
+    document.getElementById(`slice-${writingId}`)?.scrollIntoView({ block: 'nearest' });
+  }, [writingId]);
+
   async function openFile(file: File): Promise<void> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const filePath = window.bookDistiller.pathForFile(file);
@@ -242,6 +297,8 @@ export function App() {
     setPdfBytes(bytes);
     setPdfMissing(false);
     setShowMissingPdf(false);
+    setBookPath('');
+    setOpenMessage('');
     setDecision(opened);
     setSlices([]);
     setStudy([]);
@@ -293,6 +350,34 @@ export function App() {
     setKeyMessage('');
   }
 
+  async function showBook(folder: string): Promise<string> {
+    const opened = await window.bookDistiller.openBook(folder);
+    if (opened.status === 'refused') {
+      return opened.message;
+    }
+    if (opened.status !== 'opened') {
+      return 'This book folder could not be read.';
+    }
+    setBookPath(folder);
+    setFolderMessage('');
+    setOpenMessage('');
+    setPdfPath(opened.pdfPath);
+    setPdfBytes(opened.pdfMissing ? null : opened.pdfBytes);
+    setBookTitle(opened.title);
+    setPdfMissing(opened.pdfMissing);
+    setShowMissingPdf(false);
+    setShowAllSlices(true);
+    setStudy(opened.slices);
+    setDrawer(null);
+    setQueueRunning(false);
+    setQueueKind(null);
+    const first = opened.slices.find((slice) => slice.status === 'done' && slice.board);
+    setOpenId(first ? first.id : null);
+    picked.current = true;
+    setScreen('study');
+    return '';
+  }
+
   async function chooseFolder(): Promise<void> {
     const choice = await window.bookDistiller.chooseFolder();
     if (choice.status === 'refused') {
@@ -301,44 +386,42 @@ export function App() {
       setFolderMessage(choice.message);
       return;
     }
+    if (choice.status === 'book') {
+      const message = await showBook(choice.folderPath);
+      if (message !== '') {
+        setFolderMessage(message);
+      }
+      return;
+    }
     if (choice.status !== 'chosen') {
       return;
     }
     folderChosen.current = true;
-    const opened = await window.bookDistiller.openBook(choice.folderPath);
-    if (opened.status === 'opened') {
-      setFolderPath(choice.folderPath);
-      setFolderMessage('');
-      setPdfPath(opened.pdfPath);
-      setPdfBytes(opened.pdfMissing ? null : opened.pdfBytes);
-      setBookTitle(opened.title);
-      setPdfMissing(opened.pdfMissing);
-      setShowMissingPdf(false);
-      setShowAllSlices(true);
-      setStudy(opened.slices);
-      setDrawer(null);
-      setQueueRunning(false);
-      const first = opened.slices.find((slice) => slice.status === 'done' && slice.board);
-      setOpenId(first ? first.id : null);
-      picked.current = true;
-      setScreen('study');
-      return;
-    }
-    if (opened.status === 'refused') {
-      setFolderPath('');
-      setFolderMessage(opened.message);
-      return;
-    }
     setFolderPath(choice.folderPath);
     setFolderMessage('');
+  }
+
+  async function openSavedBook(): Promise<void> {
+    const choice = await window.bookDistiller.chooseBook();
+    if (choice.status === 'refused') {
+      setOpenMessage(choice.message);
+      return;
+    }
+    if (choice.status !== 'book') {
+      return;
+    }
+    const message = await showBook(choice.folderPath);
+    if (message !== '') {
+      setOpenMessage(message);
+    }
   }
 
   function toggleStudy(id: string): void {
     const next = study.map((slice) => (slice.id === id ? { ...slice, checked: !slice.checked } : slice));
     setStudy(next);
-    if (folderPath !== '') {
+    if (bookPath !== '') {
       void window.bookDistiller.setChecks(
-        folderPath,
+        bookPath,
         next.map((slice) => ({ id: slice.id, checked: slice.checked })),
       );
     }
@@ -357,17 +440,26 @@ export function App() {
     if (!decision || !decision.accepted || !pdfBytes) {
       return;
     }
+    let resolved = '';
+    try {
+      resolved = await window.bookDistiller.resolveBookFolder(folderPath, pdfPath, decision.title);
+    } catch {
+      setFolderMessage('Could not create a book folder.');
+      return;
+    }
+    setBookPath(resolved);
     setDrawer(null);
     picked.current = false;
     setOpenId(null);
     setBookTitle(decision.title);
     setShowAllSlices(false);
     setQueueRunning(true);
+    setQueueKind('run');
     setScreen('study');
     setStudy(slices.map((slice) => ({ ...slice, status: 'queued' })));
     try {
       const result = await window.bookDistiller.distill({
-        folderPath,
+        folderPath: resolved,
         pdfPath,
         title: decision.title,
         modelId,
@@ -381,6 +473,7 @@ export function App() {
       }
     } finally {
       setQueueRunning(false);
+      setQueueKind(null);
     }
   }
 
@@ -394,9 +487,10 @@ export function App() {
       title = decision.title;
     }
     setQueueRunning(true);
+    setQueueKind('run');
     try {
       const result = await window.bookDistiller.distill({
-        folderPath,
+        folderPath: bookPath,
         pdfPath,
         title,
         modelId,
@@ -416,6 +510,7 @@ export function App() {
       setStudy(result.slices);
     } finally {
       setQueueRunning(false);
+      setQueueKind(null);
     }
   }
 
@@ -434,10 +529,11 @@ export function App() {
     const sectionId = openId;
     setRedoFailure('');
     setQueueRunning(true);
+    setQueueKind('redo');
     try {
       const result = await window.bookDistiller.redo(
         {
-          folderPath,
+          folderPath: bookPath,
           pdfPath,
           title,
           modelId,
@@ -462,6 +558,7 @@ export function App() {
       }
     } finally {
       setQueueRunning(false);
+      setQueueKind(null);
     }
   }
 
@@ -494,6 +591,20 @@ export function App() {
   );
   const openSlice = study.find((slice) => slice.id === openId);
   const canRedo = openSlice?.status === 'done' && openSlice.board !== undefined;
+  const checkedSlices = study.filter((slice) => slice.checked);
+  const doneCount = checkedSlices.filter((slice) => slice.status === 'done').length;
+  const failedCount = checkedSlices.filter((slice) => slice.status === 'failed').length;
+  const leftCount = checkedSlices.filter(
+    (slice) => slice.status === 'queued' || slice.status === 'writing',
+  ).length;
+  const writingSlice = study.find((slice) => slice.status === 'writing');
+  const redoing = queueKind === 'redo' && openSlice !== undefined;
+  const showRun = checkedSlices.length > 0 && (queueRunning || failedCount > 0 || leftCount > 0);
+  const runLine = writingSlice
+    ? writingLine(writingSlice)
+    : redoing && openSlice
+      ? `Writing ${openSlice.title} again`
+      : unfinishedLine(doneCount, failedCount, leftCount);
 
   const heading =
     screen === 'study' && bookTitle !== ''
@@ -526,17 +637,19 @@ export function App() {
           type="button"
           className="settings-button"
           aria-label="Settings"
+          ref={settingsButton}
           onClick={() => setSettingsOpen((open) => !open)}
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <circle cx="7" cy="7" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.25" />
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
             <path
-              d="M7 1.15v1.35M7 11.5v1.35M1.15 7h1.35M11.5 7h1.35M2.85 2.85l.95.95M10.2 10.2l.95.95M11.15 2.85l-.95.95M3.8 10.2l-.95.95"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.25"
+              strokeWidth="2"
               strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
             />
+            <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
           </svg>
         </button>
         <div className="window-controls">
@@ -557,11 +670,12 @@ export function App() {
       </header>
       {settingsOpen ? (
         <div className="overlay settings-flyout">
-          <div className="sheet" role="dialog" aria-label="Settings">
+          <div className="sheet" role="dialog" aria-label="Settings" ref={settingsPanel}>
             <button type="button" onClick={() => void chooseFolder()}>
               Choose a folder
             </button>
             {folderPath !== '' ? <p>{folderPath}</p> : null}
+            {bookPath !== '' && bookPath !== folderPath ? <p>{bookPath}</p> : null}
             {folderMessage !== '' ? <p className="notice">{folderMessage}</p> : null}
             {hasKey && !replacing ? (
               <button type="button" onClick={beginReplace}>
@@ -630,6 +744,10 @@ export function App() {
               <input type="file" accept="application/pdf,.pdf" onChange={onChoose} />
             </label>
           </div>
+          <button type="button" onClick={() => void openSavedBook()}>
+            Open book
+          </button>
+          {openMessage !== '' ? <p className="notice">{openMessage}</p> : null}
           {decision?.accepted ? (
             <>
               <p>{decision.title}</p>
@@ -664,25 +782,52 @@ export function App() {
       {screen === 'study' ? (
         <div className="viewer" role="region" aria-label="Viewer">
           {showMissingPdf ? <p className="notice">The PDF is missing.</p> : null}
+          {showRun ? (
+            <div className="run" role="status">
+              <p>{runLine}</p>
+              {queueRunning ? (
+                <>
+                  <p className="count">
+                    {doneCount} of {checkedSlices.length}
+                  </p>
+                  <progress
+                    value={doneCount}
+                    max={checkedSlices.length}
+                    aria-label={`${doneCount} of ${checkedSlices.length}`}
+                  />
+                </>
+              ) : null}
+            </div>
+          ) : null}
           <div className={drawer && pdfBytes ? 'workspace with-page' : 'workspace'}>
             <ul>
               {study
                 .filter((slice) => showAllSlices || slice.checked)
                 .map((slice) => (
-                  <li key={slice.id} className={slice.id === openId ? 'is-open' : undefined}>
+                  <li
+                    key={slice.id}
+                    id={`slice-${slice.id}`}
+                    className={
+                      [slice.id === openId ? 'is-open' : '', slice.status === 'writing' ? 'is-writing' : '']
+                        .filter((name) => name !== '')
+                        .join(' ') || undefined
+                    }
+                  >
                     {!queueRunning && slice.status !== 'done' ? (
                       <input type="checkbox" checked={slice.checked} onChange={() => toggleStudy(slice.id)} />
                     ) : null}
-                    <button type="button" onClick={() => openDone(slice)}>
+                    <button type="button" title={slice.title} onClick={() => openDone(slice)}>
                       {slice.title}
                     </button>
-                    <span className="range">{pageRange(slice.pageStart, slice.pageEnd)}</span>
-                    {slice.status === 'queued' ? <span className="status">queued</span> : null}
-                    {slice.status === 'writing' ? <span className="status">writing</span> : null}
-                    {slice.status === 'done' ? <span className="status done">done</span> : null}
-                    {slice.status === 'failed' ? (
-                      <span className="status failed">failed {slice.failureReason}</span>
-                    ) : null}
+                    <div className="meta">
+                      <span className="range">{pageRange(slice.pageStart, slice.pageEnd)}</span>
+                      {slice.status === 'queued' ? <span className="status">queued</span> : null}
+                      {slice.status === 'writing' ? <span className="status">writing</span> : null}
+                      {slice.status === 'done' ? <span className="status done">done</span> : null}
+                      {slice.status === 'failed' ? (
+                        <span className="status failed">failed {slice.failureReason}</span>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
             </ul>
@@ -700,6 +845,11 @@ export function App() {
                     setDrawer({ page, pageStart: openSlice.pageStart, pageEnd: openSlice.pageEnd });
                   }}
                 />
+              ) : writingSlice ? (
+                <div className="waiting">
+                  <p>{writingLine(writingSlice)}</p>
+                  <p>The board opens here when this section is ready.</p>
+                </div>
               ) : null}
             </div>
             {drawer && pdfBytes ? (

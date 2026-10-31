@@ -43,9 +43,10 @@ export async function launchReady(
 ): Promise<{ app: ElectronApplication; window: Page; folder: string }> {
   const userData = path.join(dir, 'user-data');
   const catalogFile = path.join(dir, 'catalog.json');
-  const folder = path.join(dir, 'book');
+  const output = path.join(dir, 'book');
+  const folder = path.join(output, 'Distiller Booklet');
   await mkdir(userData);
-  await mkdir(folder);
+  await mkdir(output);
   await writeFile(catalogFile, JSON.stringify({ models: ['north-model', 'south-model'] }));
   const app = await electron.launch({
     executablePath: electronPath,
@@ -69,11 +70,11 @@ export async function launchReady(
   await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
   await app.evaluate(({ dialog }, chosen: string) => {
     dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
-  }, folder);
+  }, output);
   await openSettings(window);
   await window.getByRole('button', { name: 'Choose a folder' }).click();
   await openSettings(window);
-  await expect(window.getByText(folder)).toBeVisible();
+  await expect(window.getByText(output)).toBeVisible();
   await window.getByRole('button', { name: 'Start' }).click();
   await expect(window.getByRole('dialog', { name: 'Slices' })).toBeVisible();
   await expect(window.getByRole('button', { name: 'Confirm' })).toBeEnabled();

@@ -9,6 +9,8 @@ export interface BookDistillerApi {
   inspectPdf: (data: Uint8Array, fileName: string, pdfPath: string) => Promise<PdfDecision>;
   slicePdf: (data: Uint8Array) => Promise<Slice[]>;
   chooseFolder: () => Promise<FolderChoice>;
+  chooseBook: () => Promise<FolderChoice>;
+  resolveBookFolder: (outputPath: string, pdfPath: string, title: string) => Promise<string>;
   saveKey: (apiKey: string) => Promise<SaveKeyResult>;
   forgetKey: () => Promise<void>;
   session: () => Promise<Session>;
