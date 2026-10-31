@@ -19,7 +19,7 @@ function writePdf(fileName, options, write) {
 }
 
 async function main() {
-  await writePdf('booklet.pdf', { info: { Title: 'Distiller Booklet' }, margin: 72, bufferPages: true }, (doc) => {
+  await writePdf('booklet.pdf', { info: { Title: 'Distiller Booklet' }, margin: 72 }, (doc) => {
     doc.outline.addItem('Preface');
     doc.font('Times-Roman').fontSize(12).text(
       'This preface thanks the people who waited while the book was written. It remembers a rainy afternoon and a long walk home. None of that is a rule you need to keep.',
@@ -53,7 +53,7 @@ async function main() {
 
   await writePdf(
     'mostly-page-numbers.pdf',
-    { info: { Title: 'Scanned Notes' }, margin: 72, bufferPages: true },
+    { info: { Title: 'Scanned Notes' }, margin: 72 },
     (doc) => {
       doc.font('Times-Roman').fontSize(12);
       doc.text('This page has enough letters to count as a real text page for the reader.', column);

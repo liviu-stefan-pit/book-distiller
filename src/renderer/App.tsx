@@ -5,9 +5,9 @@ export function App() {
   const [decision, setDecision] = useState<PdfDecision | null>(null);
 
   async function openFile(file: File): Promise<void> {
-    const next = await window.bookDistiller.inspectPdf(new Uint8Array(await file.arrayBuffer()), file.name);
-    setDecision(next);
-    document.title = next.accepted ? next.title : 'Book Distiller';
+    const opened = await window.bookDistiller.inspectPdf(new Uint8Array(await file.arrayBuffer()), file.name);
+    setDecision(opened);
+    document.title = opened.accepted ? opened.title : 'Book Distiller';
   }
 
   function onDrop(event: DragEvent<HTMLParagraphElement>): void {

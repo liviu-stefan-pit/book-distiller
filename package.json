@@ -7,7 +7,6 @@
   "scripts": {
     "build": "electron-vite build",
     "start": "electron-vite build && electron .",
-    "dev": "electron-vite dev",
     "test": "electron-vite build && playwright test",
     "typecheck": "tsc --noEmit"
   },

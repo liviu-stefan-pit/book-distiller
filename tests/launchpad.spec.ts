@@ -15,18 +15,6 @@ async function launchApp(): Promise<{ app: ElectronApplication; window: Page }> 
   return { app, window };
 }
 
-function relativeLuminance(rgb: string): number {
-  const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!match) {
-    throw new Error(`expected an rgb color, got ${rgb}`);
-  }
-  const channels = [match[1], match[2], match[3]].map((channel) => {
-    const value = Number(channel) / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-}
-
 async function dropPdf(window: Page, pdfPath: string, fileName: string): Promise<void> {
   const bytes = await readFile(pdfPath);
   await window.evaluate(
@@ -110,7 +98,7 @@ test('starting the app opens one dark English launchpad', async () => {
     await expect(window).toHaveTitle('Book Distiller');
     await expect(window.getByText('Drop a PDF')).toBeVisible();
     const background = await window.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    expect(relativeLuminance(background)).toBeLessThan(0.05);
+    expect(background).toBe('rgb(18, 18, 18)');
   } finally {
     await app.close();
   }
