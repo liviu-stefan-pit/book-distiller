@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { FolderChoice } from '../main/bookFolder';
 import type { SaveKeyResult, Session } from '../main/cursorKey';
+import type { ComposeInput, ComposeProgress } from '../main/compose';
 import type { DistillInput, DistillResult, DistillSlice, OpenBookResult, RedoResult } from '../main/distill';
 import type { PdfDecision } from '../main/inspectPdf';
 import type { ModelParameterValue, ModelSelection } from '../modelSelection';
@@ -32,6 +33,8 @@ contextBridge.exposeInMainWorld('bookDistiller', {
   distill: (input: DistillInput): Promise<DistillResult> => ipcRenderer.invoke('distill', input),
   redo: (input: DistillInput, sectionId: string): Promise<RedoResult> =>
     ipcRenderer.invoke('redo', input, sectionId),
+  compose: (input: ComposeInput): Promise<ComposeProgress> => ipcRenderer.invoke('compose', input),
+  openComposedPdf: (folderPath: string): Promise<string> => ipcRenderer.invoke('open-composed-pdf', folderPath),
   cancelDistill: (): Promise<void> => ipcRenderer.invoke('cancel-distill'),
   minimizeWindow: (): void => {
     ipcRenderer.send('window-minimize');
@@ -67,6 +70,15 @@ contextBridge.exposeInMainWorld('bookDistiller', {
     ipcRenderer.on('distill-progress', wrapped);
     return () => {
       ipcRenderer.removeListener('distill-progress', wrapped);
+    };
+  },
+  onComposeProgress: (listener: (progress: ComposeProgress) => void): (() => void) => {
+    const wrapped = (_event: unknown, progress: ComposeProgress): void => {
+      listener(progress);
+    };
+    ipcRenderer.on('compose-progress', wrapped);
+    return () => {
+      ipcRenderer.removeListener('compose-progress', wrapped);
     };
   },
 });

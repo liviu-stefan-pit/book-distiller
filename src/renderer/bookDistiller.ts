@@ -1,5 +1,6 @@
 import type { FolderChoice } from '../main/bookFolder';
 import type { SaveKeyResult, Session } from '../main/cursorKey';
+import type { ComposeInput, ComposeProgress } from '../main/compose';
 import type { DistillInput, DistillResult, DistillSlice, OpenBookResult, RedoResult } from '../main/distill';
 import type { PdfDecision } from '../main/inspectPdf';
 import type { ModelParameterValue, ModelSelection } from '../modelSelection';
@@ -20,6 +21,8 @@ export interface BookDistillerApi {
   setChecks: (folderPath: string, checks: Array<{ id: string; checked: boolean }>) => Promise<void>;
   distill: (input: DistillInput) => Promise<DistillResult>;
   redo: (input: DistillInput, sectionId: string) => Promise<RedoResult>;
+  compose: (input: ComposeInput) => Promise<ComposeProgress>;
+  openComposedPdf: (folderPath: string) => Promise<string>;
   cancelDistill: () => Promise<void>;
   minimizeWindow: () => void;
   toggleMaximizeWindow: () => void;
@@ -27,6 +30,7 @@ export interface BookDistillerApi {
   onMaximized: (listener: (maximized: boolean) => void) => () => void;
   onTokenTotal: (listener: (total: number | null) => void) => () => void;
   onDistillProgress: (listener: (slices: DistillSlice[]) => void) => () => void;
+  onComposeProgress: (listener: (progress: ComposeProgress) => void) => () => void;
 }
 
 declare global {

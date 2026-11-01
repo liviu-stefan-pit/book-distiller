@@ -7,7 +7,8 @@ import type { AgentLike, CreateAgentOptions, RunLike, RunResultLike } from './he
 type Script = {
   replies?: string[];
   // A reply keyed by the sectionId in the prompt, for agents that send in no fixed order.
-  sectionReplies?: Record<string, string>;
+  // A string array is consumed in order, one entry per send for that section.
+  sectionReplies?: Record<string, string | string[]>;
   // Cumulative usage per turn, counted across every agent.
   usage?: number[];
   // Cumulative usage per turn for each agent. The agent created first reads entry 0.
@@ -22,6 +23,13 @@ let sends = 0;
 let turns = 0;
 let createdAgents = 0;
 
+/** Test-only: in-process compose tests share this module and must not leak send indexes. */
+export function resetStandInAgent(): void {
+  sends = 0;
+  turns = 0;
+  createdAgents = 0;
+}
+
 async function record(entry: Record<string, unknown>): Promise<void> {
   const file = process.env.BOOK_DISTILLER_AGENT_EVENTS;
   if (file) {
@@ -33,11 +41,23 @@ async function readScript(file: string): Promise<Script> {
   return JSON.parse(await readFile(file, 'utf8')) as Script;
 }
 
-function replyFor(script: Script, text: string, index: number): string {
+function replyFor(
+  script: Script,
+  text: string,
+  index: number,
+  sectionCursors: Map<string, number>,
+): string {
   for (const [sectionId, reply] of Object.entries(script.sectionReplies ?? {})) {
-    if (text.includes(`"sectionId": "${sectionId}"`)) {
+    if (!text.includes(`"sectionId": "${sectionId}"`)) {
+      continue;
+    }
+    if (typeof reply === 'string') {
       return reply;
     }
+    const cursor = sectionCursors.get(sectionId) ?? 0;
+    sectionCursors.set(sectionId, cursor + 1);
+    const next = reply[cursor];
+    return typeof next === 'string' ? next : '';
   }
   return script.replies?.[index] ?? '';
 }
@@ -55,6 +75,7 @@ export async function createStandInAgent(scriptFile: string, options: CreateAgen
   });
 
   let agentTurns = 0;
+  const sectionCursors = new Map<string, number>();
   const nextUsage = (): { totalTokens: number } | undefined => {
     let total: number | undefined;
     if (script.perAgentUsage) {
@@ -112,7 +133,11 @@ export async function createStandInAgent(scriptFile: string, options: CreateAgen
       if (script.throwOnSend?.includes(index)) {
         throw new Error('stand-in send failed');
       }
-      return makeRun('send', script.hangSends?.includes(index) === true, replyFor(script, message.text, index));
+      return makeRun(
+        'send',
+        script.hangSends?.includes(index) === true,
+        replyFor(script, message.text, index, sectionCursors),
+      );
     },
     async summarize(): Promise<RunLike> {
       await record({ event: 'summarize', agentId });

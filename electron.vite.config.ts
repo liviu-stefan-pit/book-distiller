@@ -5,7 +5,7 @@ export default defineConfig({
   main: {
     build: {
       externalizeDeps: {
-        include: ['@napi-rs/canvas'],
+        include: ['@napi-rs/canvas', '@myriaddreamin/typst-ts-node-compiler'],
       },
     },
   },

@@ -12,6 +12,10 @@ The reader wants each small section as a board: every technical point still ther
 
 A local Electron app. The reader drops one PDF, chooses an output folder, saves a Cursor key, picks one model, and confirms which slices to run. The app slices the book locally, sends slices to up to six Cursor agents at once, one slice per agent at a time — that slice’s page images and its extracted text, not the whole PDF — and keeps a board file only when the JSON shape is valid and every cited page is inside the slice. The viewer shows the first accepted board while later slices run. Closing the app keeps every accepted board inside a folder named after the book. Opening that book folder again shows them and spends nothing until the reader presses Continue.
 
+## Compose
+
+Distill still adds nothing the source did not write. Compose, on the study screen, sends each finished technical board through a reviewer and writes `composed.pdf` in the book folder. The reviewer may add a labeled gap, a current technique, or an extra example, and it may leave an addition out. The sheet shows pages and the tokens of that run. Open PDF appears when the manifest field `composedPdf` is `composed.pdf` and that file is in the folder. Cancel keeps finished chapters and does not publish the PDF.
+
 ## Terms
 
 - **Slice.** A heading-bounded run of pages, at most 6, or a 4-page window when the PDF has no outline. When the outline has a bookmark titled Chapter plus a number, the cuts follow that chapter’s own sections. One slice becomes one board.
@@ -153,7 +157,7 @@ Automated agent tests use a stand-in that returns board text. They accept a boar
 
 ## Out of Scope
 
-OCR and image-only scans. macOS and Linux. An installer. Tauri. Theme switching and component kits. Animated diagrams and cropped figures. Examples the book did not write. Generated exercises. A library of books. A price counter. The agent’s transcript. Column reordering and hyphen repair. Sending the whole book as one PDF.
+OCR and image-only scans. macOS and Linux. An installer. Tauri. Theme switching and component kits. Animated diagrams and cropped figures. Generated exercises. A library of books. A price counter. The agent’s transcript. Column reordering and hyphen repair.
 
 ## Further Notes
 

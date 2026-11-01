@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@cursor/sdk": "^1.2.0",
+    "@myriaddreamin/typst-ts-node-compiler": "^0.7.0",
     "@napi-rs/canvas": "^1.1.0",
     "pdfjs-dist": "^6.4.299",
     "react": "^19.3.1",

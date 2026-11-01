@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
+import type { ComposeProgress, ComposeSection } from '../main/compose';
 import type { Board, DistillSlice } from '../main/distill';
 import type { PdfDecision } from '../main/inspectPdf';
 import type { Slice } from '../main/slicePdf';
@@ -28,6 +29,67 @@ function pagePhrase(start: number, end: number): string {
 function writingLine(slice: DistillSlice): string {
   const again = slice.attempt === 2 ? ' again' : '';
   return `Writing ${slice.title}${again}, ${pagePhrase(slice.pageStart, slice.pageEnd)}`;
+}
+
+function composeStatusLine(progress: ComposeProgress): string {
+  if (progress.phase === 'typesetting') {
+    return 'Setting the type';
+  }
+  if (progress.phase === 'done' && progress.pagesDone > 0) {
+    return 'The book is ready.';
+  }
+  if (progress.phase === 'failed') {
+    return 'The type could not be set.';
+  }
+  if (progress.phase === 'cancelled') {
+    return 'Cancelled.';
+  }
+  if (progress.activeTitles.length === 1) {
+    return `Reviewing ${progress.activeTitles[0]}`;
+  }
+  if (progress.activeTitles.length > 1) {
+    return `Reviewing ${progress.activeTitles.length} sections`;
+  }
+  return '';
+}
+
+function composePagesLine(pagesDone: number, pagesTotal: number): string {
+  return `${pagesDone} of ${pagesTotal} pages`;
+}
+
+function composeElapsed(milliseconds: number): string {
+  const total = Math.max(0, Math.floor(milliseconds / 1000));
+  if (total < 60) {
+    return `${total}s`;
+  }
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
+}
+
+function composeSectionWord(state: ComposeSection['state']): string {
+  if (state === 'reviewing') {
+    return 'Reviewing';
+  }
+  if (state === 'done') {
+    return 'Done';
+  }
+  if (state === 'failed') {
+    return 'Failed';
+  }
+  return 'Waiting';
+}
+
+function composeRunTokens(total: number | null, baseline: number | null): number | null {
+  if (total === null) {
+    return null;
+  }
+  if (baseline === null) {
+    return total;
+  }
+  return Math.max(0, total - baseline);
+}
+
+function boardHasContent(board: Board | undefined): boolean {
+  return board !== undefined && (board.points.length > 0 || board.code.length > 0);
 }
 
 function unfinishedLine(done: number, failed: number, left: number): string {
@@ -306,7 +368,17 @@ export function App() {
   const [maximized, setMaximized] = useState(false);
   const [tokenTotal, setTokenTotal] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeRunning, setComposeRunning] = useState(false);
+  const [composeCancelling, setComposeCancelling] = useState(false);
+  const [composeProgress, setComposeProgress] = useState<ComposeProgress | null>(null);
+  const [hasComposedPdf, setHasComposedPdf] = useState(false);
+  const [composePdfMessage, setComposePdfMessage] = useState('');
   const keyLocked = useRef(false);
+  const [composeElapsedMs, setComposeElapsedMs] = useState(0);
+  const composeTokenBaseline = useRef<number | null>(null);
+  const composeStartedAt = useRef(0);
+  const composeSectionList = useRef<HTMLUListElement>(null);
   const folderChosen = useRef(false);
   const picked = useRef(false);
   const settingsButton = useRef<HTMLButtonElement>(null);
@@ -325,6 +397,39 @@ export function App() {
       setCancelling(false);
     }
   }, [queueRunning]);
+
+  useEffect(() => {
+    if (!composeRunning) {
+      setComposeCancelling(false);
+    }
+  }, [composeRunning]);
+
+  const composePhase = composeProgress?.phase;
+  const composeReviewingId = composeProgress?.sections.find((section) => section.state === 'reviewing')?.id ?? null;
+
+  useEffect(() => {
+    if (!composeOpen) {
+      return;
+    }
+    setComposeElapsedMs(Date.now() - composeStartedAt.current);
+    if (composePhase === 'done' || composePhase === 'failed' || composePhase === 'cancelled') {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setComposeElapsedMs(Date.now() - composeStartedAt.current);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [composeOpen, composePhase]);
+
+  useEffect(() => {
+    if (!composeOpen || composeReviewingId === null) {
+      return;
+    }
+    const row = Array.from(composeSectionList.current?.children ?? []).find(
+      (child) => child.getAttribute('data-section-id') === composeReviewingId,
+    );
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [composeOpen, composeReviewingId]);
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -374,6 +479,15 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    return window.bookDistiller.onComposeProgress((progress) => {
+      setComposeProgress(progress);
+      if (progress.phase === 'done' && progress.pagesDone > 0) {
+        setHasComposedPdf(true);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     return window.bookDistiller.onDistillProgress((next) => {
       setStudy(next);
       if (picked.current) {
@@ -408,6 +522,11 @@ export function App() {
     setPdfMissing(false);
     setShowMissingPdf(false);
     setBookPath('');
+    setHasComposedPdf(false);
+    setComposeOpen(false);
+    setComposeRunning(false);
+    setComposeProgress(null);
+    setComposePdfMessage('');
     setOpenMessage('');
     setDecision(opened);
     setSlices([]);
@@ -471,6 +590,11 @@ export function App() {
       return 'This book folder could not be read.';
     }
     setBookPath(folder);
+    setHasComposedPdf(opened.composedPdf);
+    setComposeOpen(false);
+    setComposeRunning(false);
+    setComposeProgress(null);
+    setComposePdfMessage('');
     setFolderMessage('');
     setOpenMessage('');
     setPdfPath(opened.pdfPath);
@@ -560,6 +684,10 @@ export function App() {
       return;
     }
     setBookPath(resolved);
+    setHasComposedPdf(false);
+    setComposeOpen(false);
+    setComposeProgress(null);
+    setComposePdfMessage('');
     setDrawer(null);
     picked.current = false;
     setOpenId(null);
@@ -678,6 +806,56 @@ export function App() {
     }
   }
 
+  async function startCompose(): Promise<void> {
+    setComposePdfMessage('');
+    setComposeCancelling(false);
+    composeTokenBaseline.current = tokenTotal;
+    composeStartedAt.current = Date.now();
+    setComposeElapsedMs(0);
+    setComposeProgress({
+      phase: 'reviewing',
+      pagesDone: 0,
+      pagesTotal: 0,
+      activeTitles: [],
+      failedTitles: [],
+      sections: [],
+    });
+    setComposeOpen(true);
+    setComposeRunning(true);
+    try {
+      const result = await window.bookDistiller.compose({
+        folderPath: bookPath,
+        modelId,
+        modelParams,
+      });
+      setComposeProgress(result);
+      if (result.phase === 'done' && result.pagesDone > 0) {
+        setHasComposedPdf(true);
+      }
+    } catch {
+      setComposeProgress((current) => ({
+        phase: 'failed',
+        pagesDone: current?.pagesDone ?? 0,
+        pagesTotal: current?.pagesTotal ?? 0,
+        activeTitles: [],
+        failedTitles: current?.failedTitles ?? [],
+        sections: current?.sections ?? [],
+      }));
+    } finally {
+      setComposeRunning(false);
+    }
+  }
+
+  function closeCompose(): void {
+    setComposeOpen(false);
+    setComposeCancelling(false);
+  }
+
+  async function revealComposedPdf(): Promise<void> {
+    const message = await window.bookDistiller.openComposedPdf(bookPath);
+    setComposePdfMessage(message);
+  }
+
   function toggleSlice(id: string): void {
     setSlices((current) =>
       current.map((slice) => (slice.id === id ? { ...slice, checked: !slice.checked } : slice)),
@@ -707,6 +885,7 @@ export function App() {
   const canContinue = study.some(
     (slice) => slice.checked && (slice.status === 'failed' || slice.status === 'queued'),
   );
+  const canCompose = study.some((slice) => slice.status === 'done' && boardHasContent(slice.board));
   const openSlice = study.find((slice) => slice.id === openId);
   const canRedo = openSlice?.status === 'done' && openSlice.board !== undefined;
   const checkedSlices = study.filter((slice) => slice.checked);
@@ -721,7 +900,31 @@ export function App() {
   const writingStatus =
     writingSlices.length > 1 ? `Writing ${writingSlices.length} slices` : writingSlice ? writingLine(writingSlice) : '';
   const redoing = queueKind === 'redo' && openSlice !== undefined;
-  const showRun = checkedSlices.length > 0 && (queueRunning || failedCount > 0 || leftCount > 0);
+  const showRun =
+    !composeRunning && checkedSlices.length > 0 && (queueRunning || failedCount > 0 || leftCount > 0);
+  const composeBusy =
+    composeProgress !== null &&
+    (composeProgress.phase === 'reviewing' || composeProgress.phase === 'typesetting');
+  const composeFinished =
+    composeProgress !== null &&
+    (composeProgress.phase === 'done' ||
+      composeProgress.phase === 'failed' ||
+      composeProgress.phase === 'cancelled');
+  const composeReady = composeProgress !== null && composeProgress.phase === 'done' && composeProgress.pagesDone > 0;
+  const composeTokens = composeOpen ? composeRunTokens(tokenTotal, composeTokenBaseline.current) : null;
+  const composePages = composeProgress
+    ? composePagesLine(composeProgress.pagesDone, composeProgress.pagesTotal)
+    : composePagesLine(0, 0);
+  const composeMeta = [
+    ...(composeProgress && composeProgress.pagesTotal > 0
+      ? [
+          composePages,
+          `${composeProgress.sections.filter((section) => section.state === 'done').length} of ${composeProgress.sections.length} sections`,
+        ]
+      : []),
+    ...(composeTokens !== null ? [`${composeTokens.toLocaleString('en-US')} tokens`] : []),
+    composeElapsed(composeElapsedMs),
+  ].join(' \u00b7 ');
   const runLine = writingSlice
     ? writingStatus
     : redoing && openSlice
@@ -751,14 +954,29 @@ export function App() {
             {cancelling ? 'Cancelling' : 'Cancel'}
           </button>
         ) : null}
-        {screen === 'study' && !queueRunning && canContinue ? (
+        {screen === 'study' && !queueRunning && !composeRunning && canContinue ? (
           <button type="button" onClick={() => void continueBook()}>
             Continue
           </button>
         ) : null}
-        {screen === 'study' && !queueRunning && canRedo ? (
+        {screen === 'study' && !queueRunning && !composeRunning && canRedo ? (
           <button type="button" onClick={() => void redoOpen()}>
             Redo
+          </button>
+        ) : null}
+        {screen === 'study' &&
+        !queueRunning &&
+        !composeRunning &&
+        hasKey &&
+        modelId !== '' &&
+        canCompose ? (
+          <button type="button" onClick={() => void startCompose()}>
+            Compose
+          </button>
+        ) : null}
+        {screen === 'study' && !composeRunning && hasComposedPdf ? (
+          <button type="button" onClick={() => void revealComposedPdf()}>
+            Open PDF
           </button>
         ) : null}
         {screen === 'study' && redoFailure !== '' ? <span>{redoFailure}</span> : null}
@@ -800,6 +1018,9 @@ export function App() {
           </button>
         </div>
       </header>
+      {screen === 'study' && !composeOpen && composePdfMessage !== '' ? (
+        <p className="notice">{composePdfMessage}</p>
+      ) : null}
       {settingsOpen ? (
         <div className="overlay settings-flyout">
           <div className="sheet" role="dialog" aria-label="Settings" ref={settingsPanel}>
@@ -950,6 +1171,69 @@ export function App() {
             <button type="button" className="primary" disabled={!confirmEnabled} onClick={() => void confirm()}>
               Confirm
             </button>
+          </div>
+        </div>
+      ) : null}
+      {composeOpen && composeProgress ? (
+        <div className="overlay">
+          <div className="sheet compose" role="dialog" aria-label="Compose">
+            <div className="compose-head">
+              <h2>Compose</h2>
+              {bookTitle !== '' ? <p className="compose-book">{bookTitle}</p> : null}
+            </div>
+            <div role="status">
+              <p className="compose-status">{composeStatusLine(composeProgress)}</p>
+            </div>
+            <p className="compose-meta">{composeMeta}</p>
+            {composeProgress.pagesTotal > 0 ? (
+              <progress
+                value={composeProgress.pagesDone}
+                max={composeProgress.pagesTotal}
+                aria-label={composePages}
+              />
+            ) : null}
+            {composeProgress.sections.length > 0 ? (
+              <ul className="compose-sections" ref={composeSectionList} aria-label="Sections">
+                {composeProgress.sections.map((section) => (
+                  <li
+                    key={section.id}
+                    className={`compose-section ${section.state}`}
+                    data-section-id={section.id}
+                  >
+                    <span className="compose-section-title">{section.title}</span>
+                    <span className="compose-section-pages">{`${section.pageStart}\u2013${section.pageEnd}`}</span>
+                    <span className="compose-section-state">{composeSectionWord(section.state)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className={composeBusy ? 'compose-footer busy' : 'compose-footer'}>
+              {composeBusy ? (
+                <button
+                  type="button"
+                  disabled={composeCancelling}
+                  onClick={() => {
+                    setComposeCancelling(true);
+                    void window.bookDistiller.cancelDistill();
+                  }}
+                >
+                  {composeCancelling ? 'Cancelling' : 'Cancel'}
+                </button>
+              ) : null}
+              {composeFinished ? (
+                <>
+                  <button type="button" onClick={closeCompose}>
+                    Close
+                  </button>
+                  {composeReady ? (
+                    <button type="button" className="primary" onClick={() => void revealComposedPdf()}>
+                      Open PDF
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+            {composePdfMessage !== '' ? <p className="notice">{composePdfMessage}</p> : null}
           </div>
         </div>
       ) : null}

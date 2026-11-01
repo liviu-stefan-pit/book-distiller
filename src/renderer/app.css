@@ -393,6 +393,123 @@ button.primary:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.sheet.compose {
+  width: min(32rem, calc(100% - 32px));
+}
+
+.sheet.compose h2 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.sheet.compose p.compose-book {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sheet.compose p.compose-status {
+  min-height: 1.4em;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.sheet.compose p.compose-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet.compose progress {
+  width: 100%;
+  height: 4px;
+  margin: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--elevated);
+  color: var(--text);
+  appearance: none;
+}
+
+.sheet.compose progress::-webkit-progress-bar {
+  background: var(--elevated);
+  border-radius: 2px;
+}
+
+.sheet.compose progress::-webkit-progress-value {
+  background: var(--text);
+  border-radius: 2px;
+}
+
+.sheet.compose progress::-moz-progress-bar {
+  background: var(--text);
+  border-radius: 2px;
+}
+
+.compose-sections {
+  max-height: 240px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.compose-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 5.5rem;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-section + .compose-section {
+  border-top: 1px solid var(--border);
+}
+
+.compose-section-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.compose-section-pages {
+  color: var(--text-muted);
+}
+
+.compose-section-state {
+  text-align: right;
+}
+
+.compose-section.reviewing .compose-section-state {
+  color: var(--text);
+}
+
+.compose-section.done .compose-section-state {
+  color: var(--success);
+}
+
+.compose-section.failed .compose-section-state {
+  color: var(--danger);
+}
+
+.compose-section.queued .compose-section-state {
+  color: var(--text-muted);
+}
+
+.compose-footer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.compose-footer.busy {
+  justify-content: flex-start;
+}
+
 .viewer {
   flex: 1;
   min-width: 0;

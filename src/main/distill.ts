@@ -1,7 +1,8 @@
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModelParameterValue } from '../modelSelection';
+import { composedPdfReady, nextManifestText } from './bookManifest';
 import { readCursorKey } from './cursorKey';
 import {
   acquireSlotWorkspace,
@@ -86,6 +87,7 @@ export type OpenBookResult =
       pdfMissing: boolean;
       pdfBytes: Uint8Array;
       slices: DistillSlice[];
+      composedPdf: boolean;
     }
   | { status: 'empty' }
   | { status: 'refused'; message: string };
@@ -517,36 +519,40 @@ function queueManifest(task: () => Promise<void>): Promise<void> {
 }
 
 async function writeManifest(input: DistillInput, slices: DistillSlice[]): Promise<void> {
-  const body = `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        pdfPath: input.pdfPath,
-        title: input.title,
-        slices: slices.map((slice) => {
-          const stored: Record<string, unknown> = {
-            id: slice.id,
-            title: slice.title,
-            pageStart: slice.pageStart,
-            pageEnd: slice.pageEnd,
-            checked: slice.checked,
-            status: slice.status,
-          };
-          if (slice.status === 'done' && slice.modelId) {
-            stored.modelId = slice.modelId;
-          }
-          if (slice.status === 'failed' && slice.failureReason) {
-            stored.failureReason = slice.failureReason;
-          }
-          if (slice.status === 'failed' && slice.failureDetail) {
-            stored.failureDetail = slice.failureDetail;
-          }
-          return stored;
-        }),
-      },
-      null,
-      2,
-    )}\n`;
-  await queueManifest(() => writeFile(join(input.folderPath, 'book-manifest.json'), body, 'utf8'));
+  await queueManifest(async () => {
+    let previous = '';
+    try {
+      previous = await readFile(join(input.folderPath, 'book-manifest.json'), 'utf8');
+    } catch {
+      previous = '';
+    }
+    const body = nextManifestText(previous, {
+      schemaVersion: 1,
+      pdfPath: input.pdfPath,
+      title: input.title,
+      slices: slices.map((slice) => {
+        const stored: Record<string, unknown> = {
+          id: slice.id,
+          title: slice.title,
+          pageStart: slice.pageStart,
+          pageEnd: slice.pageEnd,
+          checked: slice.checked,
+          status: slice.status,
+        };
+        if (slice.status === 'done' && slice.modelId) {
+          stored.modelId = slice.modelId;
+        }
+        if (slice.status === 'failed' && slice.failureReason) {
+          stored.failureReason = slice.failureReason;
+        }
+        if (slice.status === 'failed' && slice.failureDetail) {
+          stored.failureDetail = slice.failureDetail;
+        }
+        return stored;
+      }),
+    });
+    await writeFile(join(input.folderPath, 'book-manifest.json'), body, 'utf8');
+  });
 }
 
 type StoredSlice = {
@@ -690,6 +696,19 @@ export async function openBook(folderPath: string): Promise<OpenBookResult> {
     },
     slices,
   );
+  let composedExists = false;
+  try {
+    await access(join(folderPath, 'composed.pdf'));
+    composedExists = true;
+  } catch {
+    composedExists = false;
+  }
+  let manifestAfter = text;
+  try {
+    manifestAfter = await readFile(join(folderPath, 'book-manifest.json'), 'utf8');
+  } catch {
+    manifestAfter = text;
+  }
   return {
     status: 'opened',
     pdfPath: stored.pdfPath,
@@ -697,6 +716,7 @@ export async function openBook(folderPath: string): Promise<OpenBookResult> {
     pdfMissing,
     pdfBytes,
     slices,
+    composedPdf: composedPdfReady(manifestAfter, composedExists),
   };
 }
 
