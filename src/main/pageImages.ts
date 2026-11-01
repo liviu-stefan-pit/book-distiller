@@ -61,7 +61,11 @@ export async function renderPageImages(
       if (!canvasContext) {
         throw new Error(`Page ${pageNumber} has no canvas context.`);
       }
-      await page.render({ canvas, canvasContext, viewport }).promise;
+      await page.render({
+        canvas: canvas as unknown as HTMLCanvasElement,
+        canvasContext: canvasContext as unknown as CanvasRenderingContext2D,
+        viewport,
+      }).promise;
       const jpeg = canvas.toBuffer('image/jpeg', 80);
       await writeFile(join(directory, `page-${pageNumber}.jpg`), jpeg);
       pages.push({ jpeg, width: canvas.width, height: canvas.height });

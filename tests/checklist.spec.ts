@@ -501,7 +501,7 @@ test('a long outline stays inside the window and scrolls', async () => {
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setContentSize(520, 420);
     });
-    await expect.poll(() => window.evaluate(() => window.innerHeight)).toBeLessThanOrEqual(420);
+    await expect.poll(() => window.evaluate(() => (globalThis as unknown as Window).innerHeight)).toBeLessThanOrEqual(420);
     await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
@@ -516,7 +516,10 @@ test('a long outline stays inside the window and scrolls', async () => {
         const rect = element.getBoundingClientRect();
         return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
       });
-      const size = await window.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+      const size = await window.evaluate(() => {
+        const view = globalThis as unknown as Window;
+        return { width: view.innerWidth, height: view.innerHeight };
+      });
       expect(box.left).toBeGreaterThanOrEqual(-1);
       expect(box.top).toBeGreaterThanOrEqual(-1);
       expect(box.right).toBeLessThanOrEqual(size.width + 1);
@@ -530,7 +533,7 @@ test('a long outline stays inside the window and scrolls', async () => {
     ).toBe(true);
 
     const last = rows.nth(39);
-    const height = await window.evaluate(() => window.innerHeight);
+    const height = await window.evaluate(() => (globalThis as unknown as Window).innerHeight);
     expect(await last.evaluate((element) => element.getBoundingClientRect().top)).toBeGreaterThanOrEqual(height);
 
     await last.scrollIntoViewIfNeeded();
@@ -541,7 +544,7 @@ test('a long outline stays inside the window and scrolls', async () => {
       return { top: rect.top, bottom: rect.bottom };
     });
     expect(after.top).toBeGreaterThanOrEqual(-1);
-    expect(after.bottom).toBeLessThanOrEqual((await window.evaluate(() => window.innerHeight)) + 1);
+    expect(after.bottom).toBeLessThanOrEqual((await window.evaluate(() => (globalThis as unknown as Window).innerHeight)) + 1);
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });
