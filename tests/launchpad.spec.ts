@@ -1,15 +1,19 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const electronPath = require('electron') as string;
 
-async function launchApp(): Promise<{ app: ElectronApplication; window: Page }> {
+async function launchApp(
+  extraEnv: Record<string, string> = {},
+): Promise<{ app: ElectronApplication; window: Page }> {
   const app = await electron.launch({
     executablePath: electronPath,
     args: [path.join(process.cwd(), 'out/main/index.js')],
+    env: { ...process.env, ...extraEnv } as Record<string, string>,
   });
   const window = await app.firstWindow();
   return { app, window };
@@ -68,12 +72,32 @@ test('dropping the booklet shows its title and page count', async () => {
   }
 });
 
-test('a PDF with too few text pages shows the incompatible file message', async () => {
+test('an empty launchpad asks for a PDF and keeps Start off', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const userData = path.join(dir, 'user-data');
+  await mkdir(userData);
+  const { app, window } = await launchApp({
+    BOOK_DISTILLER_VAULT: 'memory',
+    BOOK_DISTILLER_USER_DATA: userData,
+  });
+  try {
+    await expect(window.getByText('Drop a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF.', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'Start' })).toBeDisabled();
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a PDF with too little text says so and does not ask for a PDF', async () => {
   const { app, window } = await launchApp();
   try {
     await expect(window.getByText('Drop a PDF')).toBeVisible();
     await dropPdf(window, path.join(process.cwd(), 'fixtures/mostly-page-numbers.pdf'), 'mostly-page-numbers.pdf');
-    await expect(window.getByText('This file is incompatible.')).toBeVisible();
+    await expect(window.getByText('This PDF has too little text to read.', { exact: true })).toBeVisible();
+    await expect(window.getByText('This file is incompatible.')).toHaveCount(0);
+    await expect(window.getByText('Choose a PDF.', { exact: true })).toHaveCount(0);
     await expect(window.getByText('Scanned Notes')).toHaveCount(0);
     await expect(window.getByText(/\d+ pages?/)).toHaveCount(0);
     await expect(window).toHaveTitle('Book Distiller');
@@ -98,7 +122,7 @@ test('an accepted PDF with no title shows the file name', async () => {
 test('choosing the booklet shows its title and page count', async () => {
   const { app, window } = await launchApp();
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(path.join(process.cwd(), 'fixtures/booklet.pdf'));
     await expect(window.getByText('Distiller Booklet')).toBeVisible();
     await expect(window.getByText('4 pages')).toBeVisible();
@@ -115,7 +139,7 @@ test('starting the app opens one English drop zone', async () => {
     await expect(window.locator('html')).toHaveAttribute('lang', 'en');
     await expect(window).toHaveTitle('Book Distiller');
     await expect(window.getByText('Drop a PDF')).toBeVisible();
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await expect(window.getByRole('button', { name: 'Start' })).toBeVisible();
     await expect(window.getByRole('button', { name: 'Settings' })).toBeVisible();
     await expect(window.getByLabel('Cursor key')).toHaveCount(0);

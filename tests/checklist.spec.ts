@@ -171,7 +171,7 @@ test('a heading longer than 6 pages splits into chunks of 6', async () => {
       doc.outline.addItem('Chapter');
       addTextPages(doc, 8, readable);
     });
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
     const rows = window.getByRole('listitem');
@@ -209,7 +209,7 @@ test('a longer heading splits on its children before chunking', async () => {
       writePage(doc);
       writeFollowingPages(doc, 2);
     });
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
     const rows = window.getByRole('listitem');
@@ -238,7 +238,7 @@ test('pages outside the outline start unchecked and stay within 6 pages', async 
       writePage(doc);
       writeFollowingPages(doc, 1);
     });
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
     const rows = window.getByRole('listitem');
@@ -266,7 +266,7 @@ test('a PDF with no outline becomes 4-page windows', async () => {
       doc.addPage();
       writePage(doc);
     });
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
     const rows = window.getByRole('listitem');
@@ -306,7 +306,7 @@ test('front matter starts unchecked and a technical heading starts checked', asy
         writePage(doc);
       });
     });
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
     const rows = window.getByRole('listitem');
@@ -336,7 +336,7 @@ test('slices keep separate checkboxes when their ids would collide', async () =>
       doc.outline.addItem('Chapter');
       writePage(doc);
     });
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
     const rows = window.getByRole('listitem');
@@ -345,6 +345,49 @@ test('slices keep separate checkboxes when their ids would collide', async () =>
     await expectSlice(rows.nth(0), 'Chapter', 1, 1, true);
     await expectSlice(rows.nth(1), 'Chapter 7', 2, 6, true);
     await expectSlice(rows.nth(2), 'Chapter', 7, 7, false);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the checklist says how many slices and pages Confirm will send', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const { app, window, folder } = await launchApp(dir);
+  try {
+    await expect(window.getByText('Drop a PDF')).toBeVisible();
+    await dropPdf(window, path.join(process.cwd(), 'fixtures/booklet.pdf'), 'booklet.pdf');
+    await openChecklist(app, window, folder);
+    const dialog = window.getByRole('dialog', { name: 'Slices' });
+    const rows = dialog.getByRole('listitem');
+    const confirm = dialog.getByRole('button', { name: 'Confirm' });
+    const sentence = (text: string) => dialog.getByText(text, { exact: true });
+    await expect(sentence('Confirm will send 2 slices, 3 pages.')).toBeVisible();
+    await expect(confirm).toBeEnabled();
+    const above = await dialog.evaluate((element) => {
+      const line = [...element.querySelectorAll('p')].find((item) => item.textContent?.startsWith('Confirm will send'));
+      const button = [...element.querySelectorAll('button')].find((item) => item.textContent === 'Confirm');
+      if (!line || !button) {
+        throw new Error('missing send line or Confirm');
+      }
+      return line.getBoundingClientRect().bottom <= button.getBoundingClientRect().top + 1;
+    });
+    expect(above).toBe(true);
+
+    await rows.nth(2).getByRole('checkbox').click();
+    await expect(sentence('Confirm will send 1 slice, 1 page.')).toBeVisible();
+    await rows.nth(2).getByRole('checkbox').click();
+    await rows.nth(1).getByRole('checkbox').click();
+    await expect(sentence('Confirm will send 1 slice, 2 pages.')).toBeVisible();
+    await rows.nth(0).getByRole('checkbox').click();
+    await expect(sentence('Confirm will send 2 slices, 3 pages.')).toBeVisible();
+    await rows.nth(0).getByRole('checkbox').click();
+    await rows.nth(2).getByRole('checkbox').click();
+    await expect(sentence('Confirm will send 0 slices, 0 pages.')).toBeVisible();
+    await expect(confirm).toBeDisabled();
+    await rows.nth(0).getByRole('checkbox').click();
+    await expect(sentence('Confirm will send 1 slice, 1 page.')).toBeVisible();
+    await expect(confirm).toBeEnabled();
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });
@@ -411,7 +454,7 @@ test('confirm shows the first board in the viewer and creates a missing folder',
       https.get = fail('https.get') as typeof https.get;
       globalThis.fetch = fail('fetch') as typeof fetch;
     });
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(path.join(process.cwd(), 'fixtures/booklet.pdf'));
     await saveKeyAndModel(window);
     await chooseLaunchFolder(app, window, notes);
@@ -459,7 +502,7 @@ test('a long outline stays inside the window and scrolls', async () => {
       BrowserWindow.getAllWindows()[0]?.setContentSize(520, 420);
     });
     await expect.poll(() => window.evaluate(() => window.innerHeight)).toBeLessThanOrEqual(420);
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(pdfPath);
     await openChecklist(app, window, folder);
 
@@ -522,7 +565,7 @@ test('a non-empty folder is the output and this book opens', async () => {
   const { app, window } = await launchApp(dir, { BOOK_DISTILLER_AGENT_LOG: agentLog });
   const start = window.getByRole('button', { name: 'Start' });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await window.locator('input[type=file]').setInputFiles(booklet);
     await saveKeyAndModel(window);
     await expect(start).toBeDisabled();

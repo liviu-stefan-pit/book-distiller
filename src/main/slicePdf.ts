@@ -1,12 +1,7 @@
-import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { pdfWorkerSrc } from './pdfWorker';
 
-const nodeRequire = createRequire(import.meta.url);
-
-GlobalWorkerOptions.workerSrc = pathToFileURL(
-  nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
-).href;
+GlobalWorkerOptions.workerSrc = pdfWorkerSrc();
 
 export type Slice = {
   id: string;

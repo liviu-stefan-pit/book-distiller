@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { NodeCompiler } from '@myriaddreamin/typst-ts-node-compiler';
 import type { Chapter, ChapterBlock } from './compose';
 
@@ -31,9 +33,33 @@ function calloutLabel(kind: 'added' | 'current-practice' | 'added-example'): str
   return 'Added example';
 }
 
-function renderBlock(block: ChapterBlock): string {
+// Only an existing file directly inside the book's figures folder is drawn, so a missing or foreign path
+// prints the caption alone instead of failing the compile.
+function figureImage(file: string, workspace: string | undefined): string | undefined {
+  if (workspace === undefined || !/^figures\/[^/\\]+\.jpg$/.test(file)) {
+    return undefined;
+  }
+  if (!existsSync(join(workspace, file))) {
+    return undefined;
+  }
+  return `#image(${typstString(file)}, width: 100%)`;
+}
+
+function renderBlock(block: ChapterBlock, workspace: string | undefined): string {
   if (block.type === 'prose') {
     return `#par[${content(block.text)}]\n`;
+  }
+  if (block.type === 'figure') {
+    const lines = [
+      `#block(width: 100%, inset: 10pt, stroke: 0.5pt + luma(160), fill: luma(248))[`,
+      `  #strong[${content('Figure')}] — ${content(block.caption)}`,
+    ];
+    const image = figureImage(block.file, workspace);
+    if (image !== undefined) {
+      lines.push(`  ${image}`);
+    }
+    lines.push(`  #par[${content(`Page ${block.page}`)}]`, `]\n`);
+    return lines.join('\n');
   }
   if (block.type === 'code') {
     const lines = [rawBlock(block.language, block.source)];
@@ -67,7 +93,7 @@ function groupedChapters(chapters: Chapter[]): Array<{ title: string; parts: Cha
   return groups;
 }
 
-function typstSource(title: string, chapters: Chapter[]): string {
+function typstSource(title: string, chapters: Chapter[], workspace: string | undefined): string {
   const parts: string[] = [
     `#set page(width: 7in, height: 9.25in, margin: (x: 0.75in, top: 0.85in, bottom: 0.75in), numbering: none)`,
     `#set text(font: "Libertinus Serif", size: 11pt)`,
@@ -103,16 +129,17 @@ function typstSource(title: string, chapters: Chapter[]): string {
         parts.push(`== ${content(`Part ${index + 1}`)}`);
       }
       for (const block of chapter.blocks) {
-        parts.push(renderBlock(block));
+        parts.push(renderBlock(block, workspace));
       }
     }
   }
   return `${parts.join('\n')}\n`;
 }
 
-export function typesetBook(title: string, chapters: Chapter[]): Buffer {
-  const compiler = NodeCompiler.create();
-  const compiled = compiler.compile({ mainFileContent: typstSource(title, chapters) });
+/** `workspace` is the book folder, so a figure block's `figures/...jpg` file resolves from it. */
+export function typesetBook(title: string, chapters: Chapter[], workspace?: string): Buffer {
+  const compiler = NodeCompiler.create(workspace === undefined ? undefined : { workspace });
+  const compiled = compiler.compile({ mainFileContent: typstSource(title, chapters, workspace) });
   if (compiled.hasError() || compiled.result === null) {
     const error = compiled.takeError() ?? compiled.takeDiagnostics();
     const detail = error?.shortDiagnostics

@@ -18,15 +18,23 @@ The book folder looks like this:
 
 ```text
 <book name>/book-manifest.json
+<book name>/source.pdf
 <book name>/boards/<section id>.board.json
 <book name>/notes/<section id>.md
+<book name>/figures/<section id>-<n>.jpg
 <book name>/composed/<section id>.chapter.json
 <book name>/composed.pdf
 ```
 
+A board may include a cropped figure with its caption and page.
+
 ## Run
 
 On Windows, from this repo: `npm install`, then `npm start`. `npm test` rebuilds the app and runs the checks.
+
+## Pack
+
+`npm run pack` writes a portable exe under `release/` named like `Book Distiller` plus the version (the file to send). Recipients need 64-bit Windows, internet, and their own Cursor key. They do not need Node. The exe is unsigned, so Windows SmartScreen may say it protected the PC; More info then Run anyway is how to open it. No installer.
 
 ## License
 

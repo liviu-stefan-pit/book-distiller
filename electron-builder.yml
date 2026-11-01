@@ -1,0 +1,20 @@
+appId: app.book-distiller
+productName: Book Distiller
+directories:
+  output: release
+npmRebuild: false
+files:
+  - "**/*"
+  - "out/**/*"
+asarUnpack:
+  - "**/*.node"
+  - "**/icudtl.dat"
+  - "**/node_modules/pdfjs-dist/**"
+  - "**/node_modules/@napi-rs/canvas-win32-x64-msvc/**"
+  - "**/node_modules/@myriaddreamin/typst-ts-node-compiler-win32-x64-msvc/**"
+  - "**/node_modules/@cursor/sdk-win32-x64/**"
+win:
+  signAndEditExecutable: false
+  target:
+    - portable
+    - dir

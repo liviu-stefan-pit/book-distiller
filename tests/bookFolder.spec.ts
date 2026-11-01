@@ -1,6 +1,6 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { createWriteStream } from 'node:fs';
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -389,6 +389,156 @@ test('a taken book name uses the next folder', async () => {
     await readFile(path.join(book, 'boards', 'a-numbered-rule.board.json'), 'utf8');
     expect(await readFile(path.join(taken, 'readme.txt'), 'utf8')).toBe('leave me');
     await expect(access(path.join(taken, 'book-manifest.json'))).rejects.toThrow();
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function confirmDropped(
+  dir: string,
+  output: string,
+  dropped: string,
+  agentFile: string,
+  agentLog: string,
+  settingsSaved = false,
+): Promise<void> {
+  const { app, window } = await launch(dir, {
+    BOOK_DISTILLER_AGENT_FILE: agentFile,
+    BOOK_DISTILLER_AGENT_LOG: agentLog,
+    BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
+  });
+  try {
+    await window.locator('input[type=file]').setInputFiles(dropped);
+    if (!settingsSaved) {
+      await saveKey(window);
+      await chooseDirectory(app, window, output, 'Choose a folder');
+    }
+    await window.getByRole('button', { name: 'Start' }).click();
+    await window.getByRole('listitem').filter({ hasText: 'A listing' }).getByRole('checkbox').click();
+    await window.getByRole('button', { name: 'Confirm' }).click();
+    await expect(window.getByRole('listitem').filter({ hasText: 'A numbered rule' })).toContainText('done');
+  } finally {
+    await app.close();
+  }
+}
+
+test('Confirm keeps source.pdf in the book folder and the same PDF reuses it', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const output = path.join(dir, 'notes');
+  const dropped = path.join(dir, 'dropped.pdf');
+  const agentFile = path.join(dir, 'agent.json');
+  const agentLog = path.join(dir, 'agent.log');
+  await mkdir(output);
+  await copyFile(booklet, dropped);
+  await writeFile(agentFile, JSON.stringify({ replies: [JSON.stringify(numberedRuleBoard())] }));
+  try {
+    await confirmDropped(dir, output, dropped, agentFile, agentLog);
+    const names = await readdir(output);
+    expect(names).toEqual(['Distiller Booklet']);
+    const book = path.join(output, 'Distiller Booklet');
+    expect((await readFile(path.join(book, 'source.pdf'))).equals(await readFile(dropped))).toBe(true);
+    const manifest = JSON.parse(await readFile(path.join(book, 'book-manifest.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(manifest.schemaVersion).toBe(1);
+    expect(manifest.pdfPath).toBe(path.join(book, 'source.pdf'));
+    expect(manifest.originPath).toBe(dropped);
+
+    await writeFile(agentFile, JSON.stringify({ replies: [] }));
+    await confirmDropped(dir, output, dropped, agentFile, agentLog, true);
+    expect(await readdir(output)).toEqual(['Distiller Booklet']);
+    const again = JSON.parse(await readFile(path.join(book, 'book-manifest.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(again.pdfPath).toBe(path.join(book, 'source.pdf'));
+    expect(again.originPath).toBe(dropped);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a dropped file named source.pdf outside the book folder keeps originPath and is reused', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const output = path.join(dir, 'notes');
+  const dropped = path.join(dir, 'downloads', 'source.pdf');
+  const agentFile = path.join(dir, 'agent.json');
+  const agentLog = path.join(dir, 'agent.log');
+  await mkdir(output);
+  await mkdir(path.dirname(dropped));
+  await copyFile(booklet, dropped);
+  await writeFile(agentFile, JSON.stringify({ replies: [JSON.stringify(numberedRuleBoard())] }));
+  try {
+    await confirmDropped(dir, output, dropped, agentFile, agentLog);
+    expect(await readdir(output)).toEqual(['Distiller Booklet']);
+    const book = path.join(output, 'Distiller Booklet');
+    const manifest = JSON.parse(await readFile(path.join(book, 'book-manifest.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(manifest.pdfPath).toBe(path.join(book, 'source.pdf'));
+    expect(manifest.originPath).toBe(dropped);
+
+    await writeFile(agentFile, JSON.stringify({ replies: [] }));
+    await confirmDropped(dir, output, dropped, agentFile, agentLog, true);
+    expect(await readdir(output)).toEqual(['Distiller Booklet']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a moved book folder opens its cited page without the dropped PDF', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const output = path.join(dir, 'notes');
+  const moved = path.join(dir, 'elsewhere', 'moved-book');
+  const dropped = path.join(dir, 'dropped.pdf');
+  const agentFile = path.join(dir, 'agent.json');
+  const agentLog = path.join(dir, 'agent.log');
+  await mkdir(output);
+  await mkdir(path.dirname(moved));
+  await copyFile(booklet, dropped);
+  await writeFile(agentFile, JSON.stringify({ replies: [JSON.stringify(numberedRuleBoard())] }));
+  try {
+    await confirmDropped(dir, output, dropped, agentFile, agentLog);
+    await rename(path.join(output, 'Distiller Booklet'), moved);
+    await rm(dropped);
+    const { app, window } = await launch(dir);
+    try {
+      await chooseDirectory(app, window, moved, 'Open book');
+      await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
+      await window.getByRole('button', { name: 'Page 2' }).first().click();
+      const drawer = window.getByRole('complementary', { name: 'Page 2' });
+      await expect(drawer).toBeVisible();
+      await expect
+        .poll(() => drawer.locator('canvas').evaluate((element) => (element as HTMLCanvasElement).width))
+        .toBeGreaterThan(100);
+      await expect(window.getByText('The PDF is missing.')).toHaveCount(0);
+    } finally {
+      await app.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a book folder with no source.pdf and a missing pdfPath still says the PDF is missing', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const book = path.join(dir, 'saved-book');
+  await writePartialBook(book);
+  const manifestPath = path.join(book, 'book-manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { pdfPath: string };
+  manifest.pdfPath = path.join(dir, 'missing.pdf');
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const { app, window } = await launch(dir);
+  try {
+    await chooseDirectory(app, window, book, 'Open book');
+    await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
+    await expect(window.getByText('The PDF is missing.')).toHaveCount(0);
+    await window.getByRole('button', { name: 'Page 2' }).first().click();
+    await expect(window.getByText('The PDF is missing.')).toBeVisible();
+    await expect(access(path.join(book, 'source.pdf'))).rejects.toThrow();
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });

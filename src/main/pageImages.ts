@@ -1,15 +1,10 @@
-import { createRequire } from 'node:module';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { createCanvas, DOMMatrix, ImageData, Path2D } from '@napi-rs/canvas';
+import { createCanvas, DOMMatrix, ImageData, loadImage, Path2D } from '@napi-rs/canvas';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { pdfWorkerSrc } from './pdfWorker';
 
-const nodeRequire = createRequire(import.meta.url);
-
-GlobalWorkerOptions.workerSrc = pathToFileURL(
-  nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
-).href;
+GlobalWorkerOptions.workerSrc = pdfWorkerSrc();
 
 export type RenderedPage = {
   jpeg: Buffer;
@@ -28,6 +23,20 @@ function ensureDomCanvasGlobals(): void {
   if (globals.ImageData === undefined) {
     globals.ImageData = ImageData;
   }
+}
+
+export type CropBox = { x: number; y: number; width: number; height: number };
+
+/** Crops a page JPEG by a box given in fractions of the page, from the top left. */
+export async function cropPageImage(jpeg: Buffer, crop: CropBox): Promise<Buffer> {
+  const image = await loadImage(jpeg);
+  const left = Math.min(image.width - 1, Math.max(0, Math.round(crop.x * image.width)));
+  const top = Math.min(image.height - 1, Math.max(0, Math.round(crop.y * image.height)));
+  const width = Math.max(1, Math.min(image.width - left, Math.round(crop.width * image.width)));
+  const height = Math.max(1, Math.min(image.height - top, Math.round(crop.height * image.height)));
+  const canvas = createCanvas(width, height);
+  canvas.getContext('2d').drawImage(image, left, top, width, height, 0, 0, width, height);
+  return canvas.toBuffer('image/jpeg', 90);
 }
 
 export async function renderPageImages(

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
 import type { ComposeProgress, ComposeSection } from '../main/compose';
 import type { Board, DistillSlice } from '../main/distill';
+import type { ListingMark } from '../main/listings';
 import type { PdfDecision } from '../main/inspectPdf';
 import type { Slice } from '../main/slicePdf';
 import {
@@ -29,6 +30,34 @@ function pagePhrase(start: number, end: number): string {
 function writingLine(slice: DistillSlice): string {
   const again = slice.attempt === 2 ? ' again' : '';
   return `Writing ${slice.title}${again}, ${pagePhrase(slice.pageStart, slice.pageEnd)}`;
+}
+
+function missingStepLine(decision: PdfDecision | null, hasKey: boolean, modelId: string, folderPath: string): string {
+  if (decision === null) {
+    return 'Choose a PDF.';
+  }
+  if (!decision.accepted) {
+    // The refusal is already on screen and says why this PDF cannot start.
+    return '';
+  }
+  if (!hasKey) {
+    return 'Save a Cursor key in Settings.';
+  }
+  if (modelId === '') {
+    return 'Choose a model in Settings.';
+  }
+  if (folderPath === '') {
+    return 'Choose an output folder in Settings.';
+  }
+  return '';
+}
+
+function sendSentence(slices: Slice[]): string {
+  const checked = slices.filter((slice) => slice.checked);
+  const pages = checked.reduce((sum, slice) => sum + (slice.pageEnd - slice.pageStart + 1), 0);
+  const sliceWord = checked.length === 1 ? 'slice' : 'slices';
+  const pageWord = pages === 1 ? 'page' : 'pages';
+  return `Confirm will send ${checked.length} ${sliceWord}, ${pages} ${pageWord}.`;
 }
 
 function composeStatusLine(progress: ComposeProgress): string {
@@ -89,7 +118,24 @@ function composeRunTokens(total: number | null, baseline: number | null): number
 }
 
 function boardHasContent(board: Board | undefined): boolean {
-  return board !== undefined && (board.points.length > 0 || board.code.length > 0);
+  return (
+    board !== undefined && (board.points.length > 0 || board.code.length > 0 || (board.figures ?? []).length > 0)
+  );
+}
+
+function sliceMatches(slice: DistillSlice, needle: string): boolean {
+  const has = (text: string | undefined): boolean => text !== undefined && text.toLowerCase().includes(needle);
+  if (has(slice.title)) {
+    return true;
+  }
+  const board = slice.board;
+  if (!board) {
+    return false;
+  }
+  return (
+    board.points.some((point) => has(point.title) || has(point.explanation) || has(point.example?.text)) ||
+    board.code.some((block) => has(block.title) || has(block.source) || block.notes.some((note) => has(note.why)))
+  );
 }
 
 function unfinishedLine(done: number, failed: number, left: number): string {
@@ -205,9 +251,80 @@ function CodeListing({
   );
 }
 
-function BoardView({ board, onPage }: { board: Board; onPage: (page: number) => void }) {
-  if (board.points.length === 0 && board.code.length === 0) {
-    return <p>Those pages had no technical content.</p>;
+function FigureView({
+  figure,
+  bookPath,
+  revision,
+  onPage,
+}: {
+  figure: NonNullable<Board['figures']>[number];
+  bookPath: string;
+  revision: number | undefined;
+  onPage: (page: number) => void;
+}) {
+  const [source, setSource] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    setSource('');
+    void window.bookDistiller.readFigure(bookPath, figure.file).then((url) => {
+      if (!cancelled) {
+        setSource(url);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bookPath, figure.file, revision]);
+  return (
+    <figure>
+      {source !== '' ? <img src={source} alt={figure.caption} /> : null}
+      <figcaption>{figure.caption}</figcaption>
+      <PageChip page={figure.page} onPage={onPage} />
+    </figure>
+  );
+}
+
+function PageListings({ listings }: { listings: ListingMark[] | undefined }) {
+  if (!listings || listings.length === 0) {
+    return null;
+  }
+  return (
+    <section className="page-listings" aria-label="Listings on the page">
+      <h2>Listings on the page</h2>
+      {listings.map((listing, index) => (
+        <article className="listing" key={`${index}-${listing.text}`}>
+          {listing.omitted ? <p className="omitted-mark">Omitted</p> : null}
+          <pre><code>{listing.text}</code></pre>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function BoardView({
+  board,
+  bookPath,
+  revision,
+  listings,
+  onPage,
+}: {
+  board: Board;
+  bookPath: string;
+  revision: number | undefined;
+  listings?: ListingMark[];
+  onPage: (page: number) => void;
+}) {
+  const figures = board.figures ?? [];
+  if (board.points.length === 0 && board.code.length === 0 && figures.length === 0) {
+    if (!listings || listings.length === 0) {
+      return <p>Those pages had no technical content.</p>;
+    }
+    return (
+      <div className="board" key={board.sectionId}>
+        <p>Those pages had no technical content.</p>
+        <PageListings listings={listings} />
+      </div>
+    );
   }
   const remembered = board.points.filter((point) => point.kind === 'must-remember');
   const mechanics = board.points.filter((point) => point.kind === 'mechanics');
@@ -250,6 +367,15 @@ function BoardView({ board, onPage }: { board: Board; onPage: (page: number) => 
           ))}
         </section>
       ) : null}
+      {figures.length > 0 ? (
+        <section className="figures" aria-label="Figures">
+          <h2>Figures</h2>
+          {figures.map((figure) => (
+            <FigureView key={figure.file} figure={figure} bookPath={bookPath} revision={revision} onPage={onPage} />
+          ))}
+        </section>
+      ) : null}
+      <PageListings listings={listings} />
     </div>
   );
 }
@@ -363,6 +489,7 @@ export function App() {
   const [queueKind, setQueueKind] = useState<'run' | 'redo' | null>(null);
   const [redoFailure, setRedoFailure] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
@@ -381,6 +508,7 @@ export function App() {
   const composeSectionList = useRef<HTMLUListElement>(null);
   const folderChosen = useRef(false);
   const picked = useRef(false);
+  const runId = useRef(0);
   const settingsButton = useRef<HTMLButtonElement>(null);
   const settingsPanel = useRef<HTMLDivElement>(null);
 
@@ -479,7 +607,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    return window.bookDistiller.onComposeProgress((progress) => {
+    return window.bookDistiller.onComposeProgress((eventRunId, progress) => {
+      if (eventRunId !== runId.current) {
+        return;
+      }
       setComposeProgress(progress);
       if (progress.phase === 'done' && progress.pagesDone > 0) {
         setHasComposedPdf(true);
@@ -488,7 +619,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    return window.bookDistiller.onDistillProgress((next) => {
+    return window.bookDistiller.onDistillProgress((eventRunId, next) => {
+      if (eventRunId !== runId.current) {
+        return;
+      }
       setStudy(next);
       if (picked.current) {
         return;
@@ -531,6 +665,7 @@ export function App() {
     setDecision(opened);
     setSlices([]);
     setStudy([]);
+    setQuery('');
     setOpenId(null);
     picked.current = false;
     setDrawer(null);
@@ -604,6 +739,7 @@ export function App() {
     setShowMissingPdf(false);
     setShowAllSlices(true);
     setStudy(opened.slices);
+    setQuery('');
     setDrawer(null);
     setQueueRunning(false);
     setQueueKind(null);
@@ -672,15 +808,60 @@ export function App() {
     setOpenId(slice.id);
   }
 
+  function nextRun(): number {
+    runId.current += 1;
+    return runId.current;
+  }
+
+  function leaveBook(): void {
+    nextRun();
+    if (queueRunning || composeRunning) {
+      void window.bookDistiller.cancelDistill();
+    }
+    setBookPath('');
+    setBookTitle('');
+    setStudy([]);
+    setOpenId(null);
+    setSlices([]);
+    setDecision(null);
+    setPdfPath('');
+    setPdfBytes(null);
+    setDrawer(null);
+    setQuery('');
+    setRedoFailure('');
+    setComposeOpen(false);
+    setComposeProgress(null);
+    setComposePdfMessage('');
+    setComposeCancelling(false);
+    setComposeRunning(false);
+    setPdfMissing(false);
+    setShowMissingPdf(false);
+    setShowAllSlices(false);
+    setHasComposedPdf(false);
+    setQueueRunning(false);
+    setQueueKind(null);
+    setCancelling(false);
+    setOpenMessage('');
+    picked.current = false;
+    setScreen('launchpad');
+    document.title = 'Book Distiller';
+  }
+
   async function confirm(): Promise<void> {
     if (!decision || !decision.accepted || !pdfBytes) {
       return;
     }
+    const id = nextRun();
     let resolved = '';
     try {
       resolved = await window.bookDistiller.resolveBookFolder(folderPath, pdfPath, decision.title);
     } catch {
-      setFolderMessage('Could not create a book folder.');
+      if (runId.current === id) {
+        setFolderMessage('Could not create a book folder.');
+      }
+      return;
+    }
+    if (runId.current !== id) {
       return;
     }
     setBookPath(resolved);
@@ -693,28 +874,37 @@ export function App() {
     setOpenId(null);
     setBookTitle(decision.title);
     setShowAllSlices(false);
+    setQuery('');
     setQueueRunning(true);
     setQueueKind('run');
     setScreen('study');
     setStudy(slices.map((slice) => ({ ...slice, status: 'queued' })));
     try {
-      const result = await window.bookDistiller.distill({
-        folderPath: resolved,
-        pdfPath,
-        title: decision.title,
-        modelId,
-        modelParams,
-        pdfBytes,
-        slices,
-      });
+      const result = await window.bookDistiller.distill(
+        {
+          folderPath: resolved,
+          pdfPath,
+          title: decision.title,
+          modelId,
+          modelParams,
+          pdfBytes,
+          slices,
+        },
+        id,
+      );
+      if (runId.current !== id) {
+        return;
+      }
       setStudy(result.slices);
       if (!picked.current) {
         const latest = [...result.slices].reverse().find((slice) => slice.status === 'done' && slice.board);
         setOpenId(latest ? latest.id : null);
       }
     } finally {
-      setQueueRunning(false);
-      setQueueKind(null);
+      if (runId.current === id) {
+        setQueueRunning(false);
+        setQueueKind(null);
+      }
     }
   }
 
@@ -723,6 +913,7 @@ export function App() {
       setShowMissingPdf(true);
       return;
     }
+    const id = nextRun();
     let title = bookTitle;
     if (title === '' && decision?.accepted) {
       title = decision.title;
@@ -730,30 +921,38 @@ export function App() {
     setQueueRunning(true);
     setQueueKind('run');
     try {
-      const result = await window.bookDistiller.distill({
-        folderPath: bookPath,
-        pdfPath,
-        title,
-        modelId,
-        modelParams,
-        pdfBytes: pdfBytes ?? new Uint8Array(),
-        slices: study.map((slice) => ({
-          id: slice.id,
-          title: slice.title,
-          pageStart: slice.pageStart,
-          pageEnd: slice.pageEnd,
-          checked: slice.checked,
-          status: slice.status,
-          modelId: slice.modelId,
-          failureReason: slice.failureReason,
-          failureDetail: slice.failureDetail,
-          board: slice.board,
-        })),
-      });
+      const result = await window.bookDistiller.distill(
+        {
+          folderPath: bookPath,
+          pdfPath,
+          title,
+          modelId,
+          modelParams,
+          pdfBytes: pdfBytes ?? new Uint8Array(),
+          slices: study.map((slice) => ({
+            id: slice.id,
+            title: slice.title,
+            pageStart: slice.pageStart,
+            pageEnd: slice.pageEnd,
+            checked: slice.checked,
+            status: slice.status,
+            modelId: slice.modelId,
+            failureReason: slice.failureReason,
+            failureDetail: slice.failureDetail,
+            board: slice.board,
+          })),
+        },
+        id,
+      );
+      if (runId.current !== id) {
+        return;
+      }
       setStudy(result.slices);
     } finally {
-      setQueueRunning(false);
-      setQueueKind(null);
+      if (runId.current === id) {
+        setQueueRunning(false);
+        setQueueKind(null);
+      }
     }
   }
 
@@ -765,6 +964,7 @@ export function App() {
       setShowMissingPdf(true);
       return;
     }
+    const id = nextRun();
     let title = bookTitle;
     if (title === '' && decision?.accepted) {
       title = decision.title;
@@ -791,7 +991,11 @@ export function App() {
           })),
         },
         sectionId,
+        id,
       );
+      if (runId.current !== id) {
+        return;
+      }
       if (result.status === 'replaced') {
         setStudy(result.slices);
         setOpenId(sectionId);
@@ -801,12 +1005,15 @@ export function App() {
         setRedoFailure(result.failureDetail ? `${result.failure}: ${result.failureDetail}` : result.failure);
       }
     } finally {
-      setQueueRunning(false);
-      setQueueKind(null);
+      if (runId.current === id) {
+        setQueueRunning(false);
+        setQueueKind(null);
+      }
     }
   }
 
   async function startCompose(): Promise<void> {
+    const id = nextRun();
     setComposePdfMessage('');
     setComposeCancelling(false);
     composeTokenBaseline.current = tokenTotal;
@@ -823,16 +1030,25 @@ export function App() {
     setComposeOpen(true);
     setComposeRunning(true);
     try {
-      const result = await window.bookDistiller.compose({
-        folderPath: bookPath,
-        modelId,
-        modelParams,
-      });
+      const result = await window.bookDistiller.compose(
+        {
+          folderPath: bookPath,
+          modelId,
+          modelParams,
+        },
+        id,
+      );
+      if (runId.current !== id) {
+        return;
+      }
       setComposeProgress(result);
       if (result.phase === 'done' && result.pagesDone > 0) {
         setHasComposedPdf(true);
       }
     } catch {
+      if (runId.current !== id) {
+        return;
+      }
       setComposeProgress((current) => ({
         phase: 'failed',
         pagesDone: current?.pagesDone ?? 0,
@@ -842,7 +1058,9 @@ export function App() {
         sections: current?.sections ?? [],
       }));
     } finally {
-      setComposeRunning(false);
+      if (runId.current === id) {
+        setComposeRunning(false);
+      }
     }
   }
 
@@ -882,6 +1100,8 @@ export function App() {
   const chosenModel = models.find((model) => model.id === modelId);
   const resolvedParams = chosenModel ? resolveSelection(models, modelId, modelParams).modelParams : [];
   const startEnabled = decision?.accepted === true && hasKey && modelId !== '' && folderPath !== '';
+  const missingStep = startEnabled ? '' : missingStepLine(decision, hasKey, modelId, folderPath);
+  const sendLine = sendSentence(slices);
   const canContinue = study.some(
     (slice) => slice.checked && (slice.status === 'failed' || slice.status === 'queued'),
   );
@@ -899,6 +1119,11 @@ export function App() {
   // One writing slice is named. Several are counted, never named by the first one alone.
   const writingStatus =
     writingSlices.length > 1 ? `Writing ${writingSlices.length} slices` : writingSlice ? writingLine(writingSlice) : '';
+  const needle = query.trim().toLowerCase();
+  const searching = needle !== '';
+  const listedSlices = searching
+    ? study.filter((slice) => sliceMatches(slice, needle))
+    : study.filter((slice) => showAllSlices || slice.checked);
   const redoing = queueKind === 'redo' && openSlice !== undefined;
   const showRun =
     !composeRunning && checkedSlices.length > 0 && (queueRunning || failedCount > 0 || leftCount > 0);
@@ -941,6 +1166,11 @@ export function App() {
   return (
     <main className={screen === 'study' ? 'app viewer-mode' : 'app'}>
       <header className="topbar">
+        {screen !== 'launchpad' ? (
+          <button type="button" onClick={leaveBook}>
+            Back
+          </button>
+        ) : null}
         <h1>{heading}</h1>
         {screen === 'study' && queueRunning ? (
           <button
@@ -1150,6 +1380,7 @@ export function App() {
             </>
           ) : null}
           {decision && !decision.accepted ? <p className="notice">{decision.message}</p> : null}
+          {screen === 'launchpad' && missingStep !== '' ? <p className="meta">{missingStep}</p> : null}
           <button type="button" className="primary" disabled={!startEnabled} onClick={() => void start()}>
             Start
           </button>
@@ -1168,6 +1399,7 @@ export function App() {
                 </li>
               ))}
             </ul>
+            <p>{sendLine}</p>
             <button type="button" className="primary" disabled={!confirmEnabled} onClick={() => void confirm()}>
               Confirm
             </button>
@@ -1258,10 +1490,26 @@ export function App() {
             </div>
           ) : null}
           <div className={drawer && pdfBytes ? 'workspace with-page' : 'workspace'}>
+            <div className="slice-list">
+            <input
+              type="text"
+              className="search"
+              aria-label="Search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') {
+                  return;
+                }
+                const target = listedSlices.find((slice) => slice.status === 'done' && slice.board);
+                if (target) {
+                  openDone(target);
+                }
+              }}
+            />
+            {searching && listedSlices.length === 0 ? <p className="no-matches">No matches.</p> : null}
             <ul>
-              {study
-                .filter((slice) => showAllSlices || slice.checked)
-                .map((slice) => (
+              {listedSlices.map((slice) => (
                   <li
                     key={slice.id}
                     id={`slice-${slice.id}`}
@@ -1292,10 +1540,14 @@ export function App() {
                   </li>
                 ))}
             </ul>
+            </div>
             <div className="reading">
               {openSlice?.status === 'done' && openSlice.board ? (
                 <BoardView
                   board={openSlice.board}
+                  bookPath={bookPath}
+                  revision={openSlice.boardRevision}
+                  listings={openSlice.listings}
                   onPage={(page) => {
                     if (pdfMissing) {
                       setShowMissingPdf(true);

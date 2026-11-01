@@ -15,9 +15,12 @@ import { typesetBook } from './typesetBook';
 
 export type ChapterCode = { language: string; source: string };
 
+export type ChapterFigure = { caption: string; page: number; file: string };
+
 export type ChapterBlock =
   | { type: 'prose'; text: string }
   | { type: 'code'; language: string; source: string; caption?: string }
+  | ({ type: 'figure' } & ChapterFigure)
   | {
       type: 'callout';
       kind: 'added' | 'current-practice' | 'added-example';
@@ -71,6 +74,7 @@ type Target = {
   boardHash: string;
   boardText: string;
   code: BoardCode[];
+  figures: ChapterFigure[];
 };
 
 type Failure = 'shape' | 'network' | 'cancelled';
@@ -155,6 +159,19 @@ function readChapterCode(value: unknown): ChapterCode | undefined {
   return { language: value.language, source: value.source };
 }
 
+function readChapterFigure(value: unknown): ChapterFigure | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.caption !== 'string' ||
+    typeof value.page !== 'number' ||
+    !Number.isInteger(value.page) ||
+    typeof value.file !== 'string'
+  ) {
+    return undefined;
+  }
+  return { caption: value.caption, page: value.page, file: value.file };
+}
+
 function readBlock(value: unknown): ChapterBlock | undefined {
   if (!isRecord(value) || typeof value.type !== 'string') {
     return undefined;
@@ -174,6 +191,10 @@ function readBlock(value: unknown): ChapterBlock | undefined {
       block.caption = value.caption;
     }
     return block;
+  }
+  if (value.type === 'figure') {
+    const figure = readChapterFigure(value);
+    return figure ? { type: 'figure', ...figure } : undefined;
   }
   if (value.type !== 'callout') {
     return undefined;
@@ -218,10 +239,13 @@ function readBlocks(value: unknown): ChapterBlock[] | undefined {
 
 type JudgedBlock =
   | { status: 'block'; block: ChapterBlock }
-  | { status: 'prose' | 'code' | 'callout' | 'shape' };
+  | { status: 'prose' | 'code' | 'callout' | 'figure' | 'shape' };
 
 function readJudgedBlock(value: unknown): JudgedBlock {
-  if (!isRecord(value) || (value.type !== 'prose' && value.type !== 'code' && value.type !== 'callout')) {
+  if (
+    !isRecord(value) ||
+    (value.type !== 'prose' && value.type !== 'code' && value.type !== 'callout' && value.type !== 'figure')
+  ) {
     return { status: 'shape' };
   }
   const block = readBlock(value);
@@ -283,6 +307,19 @@ function keepBoardCode(blocks: ChapterBlock[], code: BoardCode[]): ChapterBlock[
   return kept;
 }
 
+function keepBoardFigures(blocks: ChapterBlock[], figures: ChapterFigure[]): ChapterBlock[] {
+  const kept = [...blocks];
+  const files = new Set(kept.flatMap((block) => (block.type === 'figure' ? [block.file] : [])));
+  for (const figure of figures) {
+    if (files.has(figure.file)) {
+      continue;
+    }
+    kept.push({ type: 'figure', caption: figure.caption, page: figure.page, file: figure.file });
+    files.add(figure.file);
+  }
+  return kept;
+}
+
 function readStoredSlice(
   value: unknown,
 ): { id: string; title: string; pageStart: number; pageEnd: number; status: string } | undefined {
@@ -304,7 +341,9 @@ function readStoredSlice(
   };
 }
 
-function readBoardPayload(value: unknown): { points: unknown[]; code: BoardCode[] } | undefined {
+function readBoardPayload(
+  value: unknown,
+): { points: unknown[]; code: BoardCode[]; figures: ChapterFigure[] } | undefined {
   if (!isRecord(value) || !Array.isArray(value.points)) {
     return undefined;
   }
@@ -317,13 +356,22 @@ function readBoardPayload(value: unknown): { points: unknown[]; code: BoardCode[
       code.push({ language: item.language, source: item.source });
     }
   }
-  return { points: value.points, code };
+  const figures: ChapterFigure[] = [];
+  for (const item of Array.isArray(value.figures) ? value.figures : []) {
+    const figure = readChapterFigure(item);
+    if (figure) {
+      figures.push(figure);
+    }
+  }
+  return { points: value.points, code, figures };
 }
 
 async function loadBoard(
   folderPath: string,
   sectionId: string,
-): Promise<{ bytes: Buffer; text: string; code: BoardCode[]; empty: boolean } | undefined> {
+): Promise<
+  { bytes: Buffer; text: string; code: BoardCode[]; figures: ChapterFigure[]; empty: boolean } | undefined
+> {
   try {
     const bytes = await readFile(join(folderPath, 'boards', `${sectionId}.board.json`));
     const text = bytes.toString('utf8');
@@ -335,7 +383,8 @@ async function loadBoard(
       bytes,
       text,
       code: payload.code,
-      empty: payload.points.length === 0 && payload.code.length === 0,
+      figures: payload.figures,
+      empty: payload.points.length === 0 && payload.code.length === 0 && payload.figures.length === 0,
     };
   } catch {
     return undefined;
@@ -376,6 +425,7 @@ async function loadBook(folderPath: string): Promise<{ title: string; targets: T
       boardHash: sha256Hex(board.bytes),
       boardText: board.text,
       code: board.code,
+      figures: board.figures,
     });
   }
   return {
@@ -447,11 +497,12 @@ function reviewPrompt(target: Target, previous: Rejection | undefined): string {
   const rules = [
     'Rewrite the board into continuous chapter prose. Keep every rule, number, warning, and mechanism.',
     'Copy each board code listing into a code block with the source spelling unchanged.',
+    'Keep each board figure as a figure block with the same caption, page, and file. Do not invent a figure.',
     'Additions are only callout blocks: added (important gap), current-practice (a better technique used now), added-example (an extra example). Never blend an addition into prose as if the original book said it.',
     'Omit an addition the reviewer cannot state confidently. Do not invent a citation.',
     'Reply with only the chapter JSON. schemaVersion is 1. Text only. No images.',
-    'blocks is a non-empty array of prose, code, and callout objects.',
-    'A prose block has text. A code block has language and source. A callout has type callout, kind added, current-practice, or added-example, plus title and text. Optional callout code is an object with language and source.',
+    'blocks is a non-empty array of prose, code, callout, and figure objects.',
+    'A prose block has text. A code block has language and source. A callout has type callout, kind added, current-practice, or added-example, plus title and text. Optional callout code is an object with language and source. A figure block has type figure, caption, page, and file.',
   ].join('\n');
   const prompt =
     `${standsAlone}\n\n${rules}\n\nFill in this JSON skeleton:\n\`\`\`json\n${skeleton}\n\`\`\`\n\n` +
@@ -481,6 +532,10 @@ function judgeBlocks(items: unknown[], attempt: number): ChapterBlock[] | string
     }
     if (read.status === 'callout') {
       omittedCallout = true;
+      continue;
+    }
+    if (read.status === 'figure') {
+      // The board's figures are reattached after review, so a malformed one is only dropped.
       continue;
     }
     if (read.status === 'prose') {
@@ -528,7 +583,7 @@ function judgeReply(reply: RunResultLike, target: Target, attempt: number): Outc
       pageStart: target.pageStart,
       pageEnd: target.pageEnd,
       boardHash: target.boardHash,
-      blocks: keepBoardCode(judged, target.code),
+      blocks: keepBoardFigures(keepBoardCode(judged, target.code), target.figures),
     },
   };
 }
@@ -718,7 +773,7 @@ export async function composeBook(
     existed = false;
   }
   try {
-    const pdf = typesetBook(title, chapters);
+    const pdf = typesetBook(title, chapters, input.folderPath);
     if (pdf.subarray(0, 4).toString('utf8') !== '%PDF') {
       throw new Error('typeset did not produce a PDF');
     }

@@ -27,6 +27,25 @@ test('a rewrite keeps composedPdf when the previous text has the exact field', (
   expect(JSON.parse(next).slices).toHaveLength(1);
 });
 
+test('a rewrite keeps originPath when the next manifest has none', () => {
+  const previous = manifest({ originPath: '/tmp/dropped.pdf' });
+  const next = nextManifestText(previous, {
+    schemaVersion: 1,
+    pdfPath: '/tmp/book/source.pdf',
+    title: 'Compose Booklet',
+    slices: [],
+  });
+  expect(JSON.parse(next).originPath).toBe('/tmp/dropped.pdf');
+  const replaced = nextManifestText(previous, {
+    schemaVersion: 1,
+    pdfPath: '/tmp/book/source.pdf',
+    originPath: '/tmp/other.pdf',
+    title: 'Compose Booklet',
+    slices: [],
+  });
+  expect(JSON.parse(replaced).originPath).toBe('/tmp/other.pdf');
+});
+
 test('composedPdfReady is false when the file is absent', () => {
   expect(composedPdfReady(manifest({ composedPdf: 'composed.pdf' }), false)).toBe(false);
 });

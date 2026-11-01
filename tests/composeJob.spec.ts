@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createCanvas } from '@napi-rs/canvas';
 import { createHash } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -602,6 +603,45 @@ test('an invalid prose block on both attempts writes no chapter', async () => {
     expect(result.progress.failedTitles).toEqual(['A numbered rule']);
     await expect(access(path.join(folder, 'composed', 'a-numbered-rule.chapter.json'))).rejects.toThrow();
     expect(count(await events(result.log), 'send')).toBe(2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a chapter that drops a board figure gets it back before the PDF is typeset', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-compose-'));
+  try {
+    const figure = { caption: 'Write path', page: 2, file: 'figures/a-numbered-rule-1.jpg' };
+    const { folder } = await writeBook(dir, [
+      {
+        id: 'a-numbered-rule',
+        title: 'A numbered rule',
+        pageStart: 2,
+        pageEnd: 3,
+        status: 'done',
+        board: { ...(ruleBoard() as Record<string, unknown>), figures: [figure] },
+      },
+    ]);
+    const canvas = createCanvas(300, 200);
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#336699';
+    context.fillRect(0, 0, 300, 200);
+    await mkdir(path.join(folder, 'figures'), { recursive: true });
+    await writeFile(path.join(folder, figure.file), canvas.toBuffer('image/jpeg', 90));
+    const result = await withCompose(
+      dir,
+      { sectionReplies: { 'a-numbered-rule': validChapter('a-numbered-rule') } },
+      async () =>
+        composeBook({ folderPath: folder, modelId: 'north-model', modelParams: [] }, () => undefined),
+    );
+    expect(result.phase).toBe('done');
+    const chapter = JSON.parse(
+      await readFile(path.join(folder, 'composed', 'a-numbered-rule.chapter.json'), 'utf8'),
+    ) as Chapter;
+    expect(chapter.blocks).toContainEqual({ type: 'figure', ...figure });
+    expect(chapter.blocks.filter((block) => block.type === 'figure')).toHaveLength(1);
+    const composedPdf = await readFile(path.join(folder, 'composed.pdf'));
+    expect(composedPdf.subarray(0, 4).toString('utf8')).toBe('%PDF');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

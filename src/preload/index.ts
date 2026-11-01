@@ -30,11 +30,15 @@ contextBridge.exposeInMainWorld('bookDistiller', {
   openBook: (folderPath: string): Promise<OpenBookResult> => ipcRenderer.invoke('open-book', folderPath),
   setChecks: (folderPath: string, checks: Array<{ id: string; checked: boolean }>): Promise<void> =>
     ipcRenderer.invoke('set-checks', folderPath, checks),
-  distill: (input: DistillInput): Promise<DistillResult> => ipcRenderer.invoke('distill', input),
-  redo: (input: DistillInput, sectionId: string): Promise<RedoResult> =>
-    ipcRenderer.invoke('redo', input, sectionId),
-  compose: (input: ComposeInput): Promise<ComposeProgress> => ipcRenderer.invoke('compose', input),
+  distill: (input: DistillInput, runId: number): Promise<DistillResult> =>
+    ipcRenderer.invoke('distill', input, runId),
+  redo: (input: DistillInput, sectionId: string, runId: number): Promise<RedoResult> =>
+    ipcRenderer.invoke('redo', input, sectionId, runId),
+  compose: (input: ComposeInput, runId: number): Promise<ComposeProgress> =>
+    ipcRenderer.invoke('compose', input, runId),
   openComposedPdf: (folderPath: string): Promise<string> => ipcRenderer.invoke('open-composed-pdf', folderPath),
+  readFigure: (folderPath: string, file: string): Promise<string> =>
+    ipcRenderer.invoke('read-figure', folderPath, file),
   cancelDistill: (): Promise<void> => ipcRenderer.invoke('cancel-distill'),
   minimizeWindow: (): void => {
     ipcRenderer.send('window-minimize');
@@ -63,18 +67,18 @@ contextBridge.exposeInMainWorld('bookDistiller', {
       ipcRenderer.removeListener('token-total', wrapped);
     };
   },
-  onDistillProgress: (listener: (slices: DistillSlice[]) => void): (() => void) => {
-    const wrapped = (_event: unknown, slices: DistillSlice[]): void => {
-      listener(slices);
+  onDistillProgress: (listener: (runId: number, slices: DistillSlice[]) => void): (() => void) => {
+    const wrapped = (_event: unknown, runId: number, slices: DistillSlice[]): void => {
+      listener(runId, slices);
     };
     ipcRenderer.on('distill-progress', wrapped);
     return () => {
       ipcRenderer.removeListener('distill-progress', wrapped);
     };
   },
-  onComposeProgress: (listener: (progress: ComposeProgress) => void): (() => void) => {
-    const wrapped = (_event: unknown, progress: ComposeProgress): void => {
-      listener(progress);
+  onComposeProgress: (listener: (runId: number, progress: ComposeProgress) => void): (() => void) => {
+    const wrapped = (_event: unknown, runId: number, progress: ComposeProgress): void => {
+      listener(runId, progress);
     };
     ipcRenderer.on('compose-progress', wrapped);
     return () => {

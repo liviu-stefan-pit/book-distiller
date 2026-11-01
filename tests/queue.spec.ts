@@ -188,7 +188,7 @@ test('cancel during the first slice leaves the rest queued on the viewer', async
     await expect(window.getByRole('listitem').filter({ hasText: 'A listing' })).toContainText('queued');
     await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByText('Drop a PDF')).toHaveCount(0);
-    await expect(window.getByText('Choose a PDF')).toHaveCount(0);
+    await expect(window.getByText('Choose a PDF', { exact: true })).toHaveCount(0);
     let log = '';
     try {
       log = await readFile(agentLog, 'utf8');

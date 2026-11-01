@@ -84,11 +84,11 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 ## Implementation Decisions
 
 - The app is one Electron program, TypeScript. Electron’s main process reads the PDF, stores the key, and calls Cursor. The window is a React page with one stylesheet, English, on a solid near-black surface.
-- v1 runs on Windows. It is started from this repo with Node. A packaged executable waits.
+- v1 runs on Windows, can be started from this repo with Node, and `npm run pack` builds one unsigned portable exe.
 - The Cursor SDK is the model caller. Auth is a Cursor API key. Inference goes through Cursor’s hosted models. The model list is the catalog for that key. One model applies to the whole run. Each call is one model reply with no tools. It sends that slice only, at most 6 pages: rendered page images in order, one JPEG per PDF page, and the extracted text with `--- PAGE N ---` stamps. The image is the authority for what the page means (figures, columns, commands versus programs). The text layer is the authority for code spelling when it agrees with the image. The model is not left to OCR the program. The last model and the last output folder live in ordinary app settings.
 - The key is stored in Windows Credential Manager, tied to the Windows login. Save asks Cursor for the catalog first. Failure stores nothing and shows the error. After a successful save the field is write-only. Any program running as the same Windows user can read that vault; that is how the desktop credential store works.
 - The only network calls are Cursor calls: the catalog on save, and the agent during a run.
-- A page counts as text when it has at least 40 letters. On drop, fewer than 80% of pages passing means the incompatible-file message and no checklist.
+- A page counts as text when it has at least 40 letters. On drop, fewer than 80% of pages passing means “This PDF has too little text to read.” and no checklist.
 - Slice text is PDF.js text in engine order. Each page is stamped `--- PAGE N ---` using the PDF page index. v1 does no column reordering and no hyphen repair, because the page image carries layout.
 - A listing is a run of lines whose PDF.js font-family hint is monospace. A one-line run that is only a URL, or only digits, is not a listing. The board includes the book’s code when that code teaches.
 - Slicing uses the PDF outline when it exists. If any bookmark is titled Chapter plus a number, those bookmarks are the chapters, including when they sit under parts. A chapter is cut on its own sections, not on their children. A section longer than 6 pages becomes consecutive chunks of 6 pages, last chunk shorter, and the chunks keep that section’s title. Pages from the chapter start up to the first section join that first section, and the 6-page cap then splits from the front. Two section bookmarks on the same page keep the first. Pages outside every chapter start unchecked when the bookmark is cover, copyright, contents, contributors, a Packt page, introduction, about the author or reviewer, or one of the other front-matter titles. Another heading outside a chapter starts checked. A run of single-letter index bookmarks stays under the Index title, in chunks of at most 6 pages. When no bookmark is titled Chapter plus a number, a heading of 6 pages or fewer is one slice, and a longer heading splits on child outline entries, then into consecutive chunks of 6 pages, last chunk shorter. Pages in no outline entry become slices titled “Pages a–b”, at most 6 pages, starting unchecked. With no outline, slices are tiled 4-page windows labeled as page windows, last window shorter. A window starts unchecked when its text begins with one of the English front-matter titles listed in the user stories. Other windows start checked.
@@ -107,11 +107,15 @@ A **page** is the PDF page index. The printed folio in the corner is ignored. Th
 
 ```text
 <book name>/book-manifest.json
+<book name>/source.pdf
 <book name>/boards/<sectionId>.board.json
 <book name>/notes/<sectionId>.md
+<book name>/figures/<sectionId>-<n>.jpg
 ```
 
-- `sectionId` is a slug of the heading: lowercase, hyphen-separated. When two headings would share a slug, the start page is added. The manifest stores `schemaVersion`, the PDF path, the title, and each slice’s id, title, page range, checked state, status, model id when a board was accepted, and the failure reason when it failed. The app may rewrite the manifest from the board files and the PDF. The note is written only when a board is accepted, in viewer order, with page numbers, and it contains nothing the board does not contain. The PDF file is not copied. A missing PDF leaves the boards readable and the drawer says the PDF is missing.
+A board may include a cropped figure with its caption and page.
+
+- `sectionId` is a slug of the heading: lowercase, hyphen-separated. When two headings would share a slug, the start page is added. The manifest stores `schemaVersion`, the PDF path, the title, and each slice’s id, title, page range, checked state, status, model id when a board was accepted, and the failure reason when it failed. The app may rewrite the manifest from the board files and the PDF. The note is written only when a board is accepted, in viewer order, with page numbers, and it contains nothing the board does not contain. The PDF is copied into the book folder as `source.pdf`; the manifest `pdfPath` points to that copy and `originPath` keeps the path of the file that was dropped. A missing PDF leaves the boards readable and the drawer says the PDF is missing.
 
 Board shape:
 

@@ -39,6 +39,30 @@ async function openComposedPdf(folderPath: string): Promise<string> {
   return shell.openPath(pdfPath);
 }
 
+// The window shows a board figure from the book folder; the data URL never goes back into a board file.
+async function readFigure(folderPath: string, file: string): Promise<string> {
+  if (typeof folderPath !== 'string' || typeof file !== 'string' || !/^figures\/[^/\\]+\.jpg$/.test(file)) {
+    return '';
+  }
+  try {
+    const jpeg = await readFile(join(folderPath, file));
+    return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
+let jobTail: Promise<void> = Promise.resolve();
+
+function oneJob<T>(run: () => Promise<T>): Promise<T> {
+  const next = jobTail.then(run, run);
+  jobTail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 const userData = process.env.BOOK_DISTILLER_USER_DATA;
 if (userData) {
   app.setPath('userData', userData);
@@ -113,18 +137,25 @@ void app.whenReady().then(() => {
     (_event, folderPath: string, checks: Array<{ id: string; checked: boolean }>) =>
       writeChecks(folderPath, checks),
   );
-  ipcMain.handle('redo', (_event, input: DistillInput, sectionId: string) => redoSlice(input, sectionId));
-  ipcMain.handle('distill', (event, input: DistillInput) =>
-    distillQueue(input, (slices) => {
-      event.sender.send('distill-progress', slices);
-    }),
+  ipcMain.handle('redo', (_event, input: DistillInput, sectionId: string, _runId: number) =>
+    oneJob(() => redoSlice(input, sectionId)),
   );
-  ipcMain.handle('compose', (event, input: ComposeInput) =>
-    composeBook(input, (progress) => {
-      event.sender.send('compose-progress', progress);
-    }),
+  ipcMain.handle('distill', (event, input: DistillInput, runId: number) =>
+    oneJob(() =>
+      distillQueue(input, (slices) => {
+        event.sender.send('distill-progress', runId, slices);
+      }),
+    ),
+  );
+  ipcMain.handle('compose', (event, input: ComposeInput, runId: number) =>
+    oneJob(() =>
+      composeBook(input, (progress) => {
+        event.sender.send('compose-progress', runId, progress);
+      }),
+    ),
   );
   ipcMain.handle('open-composed-pdf', (_event, folderPath: string) => openComposedPdf(folderPath));
+  ipcMain.handle('read-figure', (_event, folderPath: string, file: string) => readFigure(folderPath, file));
   ipcMain.handle('cancel-distill', () => requestCancel());
   ipcMain.on('window-minimize', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();

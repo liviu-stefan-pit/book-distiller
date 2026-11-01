@@ -1,6 +1,6 @@
-import { access, appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { ModelParameterValue } from '../modelSelection';
 import { composedPdfReady, nextManifestText } from './bookManifest';
 import { readCursorKey } from './cursorKey';
@@ -13,8 +13,8 @@ import {
   sendOnSlot,
   summarizeSlot,
 } from './heldAgent';
-import { readSlice } from './listings';
-import { renderPageImages, type RenderedPage } from './pageImages';
+import { listingMarks, markListings, readSlice, type ListingMark } from './listings';
+import { cropPageImage, renderPageImages, type CropBox, type RenderedPage } from './pageImages';
 
 const keepEveryTechnicalDetail =
   'It keeps every technical rule, number, threshold, mechanism, edge case, and warning.';
@@ -38,6 +38,12 @@ export type BoardCode = {
   notes: Array<{ lines: string; why: string }>;
 };
 
+export type BoardFigure = {
+  caption: string;
+  page: number;
+  file: string;
+};
+
 export type Board = {
   schemaVersion: number;
   sectionId: string;
@@ -46,7 +52,11 @@ export type Board = {
   pageEnd: number;
   points: BoardPoint[];
   code: BoardCode[];
+  // Absent when the board has no figure.
+  figures?: BoardFigure[];
 };
+
+type FigureCrop = { caption: string; page: number; crop: CropBox };
 
 export type DistillSlice = {
   id: string;
@@ -60,7 +70,19 @@ export type DistillSlice = {
   failureReason?: string;
   failureDetail?: string;
   board?: Board;
+  // Detected on the page and computed for the window. Never written to the board file or the manifest.
+  listings?: ListingMark[];
+  // Changes each time a board is accepted, so the window reloads figure files rewritten under the same name.
+  // Never written to the board file or the manifest.
+  boardRevision?: number;
 };
+
+let boardRevisions = 0;
+
+function nextBoardRevision(): number {
+  boardRevisions += 1;
+  return boardRevisions;
+}
 
 export type DistillInput = {
   folderPath: string;
@@ -242,6 +264,84 @@ function readBoard(value: unknown): Board | 'bad point' | 'bad code' | undefined
   };
 }
 
+function pageInside(page: unknown, pageStart: number, pageEnd: number): page is number {
+  return typeof page === 'number' && Number.isInteger(page) && page >= pageStart && page <= pageEnd;
+}
+
+function readCropBox(value: unknown): CropBox | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const { x, y, width, height } = value;
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number' ||
+    ![x, y, width, height].every(Number.isFinite)
+  ) {
+    return undefined;
+  }
+  if (x < 0 || x >= 1 || y < 0 || y >= 1 || width <= 0 || height <= 0) {
+    return undefined;
+  }
+  if (x + width > 1.001 || y + height > 1.001) {
+    return undefined;
+  }
+  return { x, y, width, height };
+}
+
+// A bad figure is dropped; it never rejects the board.
+function replyFigures(value: unknown, pageStart: number, pageEnd: number): FigureCrop[] {
+  if (!isRecord(value) || !Array.isArray(value.figures)) {
+    return [];
+  }
+  const kept: FigureCrop[] = [];
+  for (const item of value.figures) {
+    if (!isRecord(item) || typeof item.caption !== 'string' || item.caption.trim() === '') {
+      continue;
+    }
+    const crop = readCropBox(item.crop);
+    if (!crop || !pageInside(item.page, pageStart, pageEnd)) {
+      continue;
+    }
+    kept.push({ caption: item.caption.trim(), page: item.page, crop });
+  }
+  return kept;
+}
+
+function figureFilePattern(sectionId: string): RegExp {
+  return new RegExp(`^${sectionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[0-9]+\\.jpg$`);
+}
+
+function storedFigures(value: unknown, sectionId: string, pageStart: number, pageEnd: number): BoardFigure[] {
+  if (!isRecord(value) || !Array.isArray(value.figures)) {
+    return [];
+  }
+  const pattern = figureFilePattern(sectionId);
+  const kept: BoardFigure[] = [];
+  for (const item of value.figures) {
+    if (
+      !isRecord(item) ||
+      typeof item.caption !== 'string' ||
+      item.caption.trim() === '' ||
+      !pageInside(item.page, pageStart, pageEnd) ||
+      typeof item.file !== 'string' ||
+      !item.file.startsWith('figures/') ||
+      !pattern.test(item.file.slice('figures/'.length))
+    ) {
+      continue;
+    }
+    kept.push({ caption: item.caption, page: item.page, file: item.file });
+  }
+  return kept;
+}
+
+function withFigures(board: Board, figures: BoardFigure[]): Board {
+  const { figures: _previous, ...rest } = board;
+  return figures.length > 0 ? { ...rest, figures } : rest;
+}
+
 function readCodeList(value: unknown): BoardCode[] | 'shape' {
   if (value === undefined) {
     return [];
@@ -264,28 +364,33 @@ type Failure = 'shape' | 'network' | 'cancelled';
 
 type Rejection = { failure: Failure; detail?: string; reply: string };
 
-type Outcome = { board: Board } | Rejection;
+type Outcome = { board: Board; figures: FigureCrop[] } | Rejection;
 
 type AgentReply = { text: string; status?: string; errorMessage?: string };
 
-function interpret(text: string): { board: Board } | { failure: 'network' | 'shape'; detail?: string } {
+function interpret(
+  text: string,
+): { board: Board; json: unknown } | { failure: 'network' | 'shape'; detail?: string } {
   if (isNetworkReply(text)) {
     return { failure: 'network' };
   }
-  const board = readBoard(firstJsonObject(text));
+  const json = firstJsonObject(text);
+  const board = readBoard(json);
   if (board === undefined) {
     return { failure: 'shape', detail: 'no board json' };
   }
   if (typeof board === 'string') {
     return { failure: 'shape', detail: board };
   }
-  return { board };
+  return { board, json };
 }
 
 const pointFieldRule =
   'A point has kind, title, explanation, and page. It has no text field. example, when present, is an object with text and page.';
 const codeFieldRule =
   'A code block has title, language, page, source, and notes. notes is an array of objects with lines and why.';
+const figureRule =
+  "A figure is a diagram, table, or picture on the page that teaches, not a code listing and not ordinary prose. figures is an array. Each figure has caption, page, and crop. caption is the book's caption when the page has one, otherwise a short name of the picture. page is the PDF page index. crop is the picture's box on that page image, from the top left, as fractions x, y, width, and height, each from 0 to 1. Omit figures when the slice has no such picture.";
 
 function instructions(pageStart: number, pageEnd: number): string {
   return [
@@ -304,11 +409,8 @@ function instructions(pageStart: number, pageEnd: number): string {
     'example is present only when the book illustrates that point.',
     pointFieldRule,
     codeFieldRule,
+    figureRule,
   ].join('\n');
-}
-
-function pageInside(page: number, pageStart: number, pageEnd: number): boolean {
-  return Number.isInteger(page) && page >= pageStart && page <= pageEnd;
 }
 
 function shapeDetail(board: Board, pageStart: number, pageEnd: number): string | undefined {
@@ -418,7 +520,8 @@ async function nextReply(
 }
 
 function noteFor(board: Board): string {
-  if (board.points.length === 0 && board.code.length === 0) {
+  const figures = board.figures ?? [];
+  if (board.points.length === 0 && board.code.length === 0 && figures.length === 0) {
     const pages = board.pageStart === board.pageEnd ? `${board.pageStart}` : `${board.pageStart}–${board.pageEnd}`;
     return `# ${board.sectionTitle}\n\nPage ${pages}\n\nThose pages had no technical content.\n`;
   }
@@ -445,6 +548,13 @@ function noteFor(board: Board): string {
     lines.push(block.title, '', block.language, '', `Page ${block.page}`, '', block.source, '');
     for (const item of block.notes) {
       lines.push(item.lines, '', item.why, '');
+    }
+  }
+  if (figures.length > 0) {
+    lines.push('## Figures', '');
+    for (const figure of figures) {
+      const alt = figure.caption.replace(/[[\]\\]/g, '\\$&');
+      lines.push(figure.caption, '', `Page ${figure.page}`, '', `![${alt}](../${figure.file})`, '');
     }
   }
   return `${lines.join('\n').trim()}\n`;
@@ -497,11 +607,12 @@ async function loadValidBoard(
 ): Promise<Board | undefined> {
   try {
     const text = await readFile(join(folderPath, 'boards', `${sectionId}.board.json`), 'utf8');
-    const board = readBoard(JSON.parse(text) as unknown);
+    const json = JSON.parse(text) as unknown;
+    const board = readBoard(json);
     if (board === undefined || typeof board === 'string' || shapeRejects(board, pageStart, pageEnd)) {
       return undefined;
     }
-    return board;
+    return withFigures(board, storedFigures(json, sectionId, pageStart, pageEnd));
   } catch {
     return undefined;
   }
@@ -518,6 +629,39 @@ function queueManifest(task: () => Promise<void>): Promise<void> {
   return run;
 }
 
+const SOURCE_PDF = 'source.pdf';
+
+function sourcePdfPath(folderPath: string): string {
+  return resolve(folderPath, SOURCE_PDF);
+}
+
+function samePath(left: string, right: string): boolean {
+  return resolve(left).toLowerCase() === resolve(right).toLowerCase();
+}
+
+// The book folder keeps its own copy of the PDF, so a moved folder or a removed original still opens its pages.
+// Writes nothing for an empty buffer, and never copies the file onto itself.
+async function keepSourcePdf(input: DistillInput): Promise<void> {
+  if (input.pdfBytes.byteLength === 0 || samePath(input.pdfPath, sourcePdfPath(input.folderPath))) {
+    return;
+  }
+  await mkdir(input.folderPath, { recursive: true });
+  await writeFile(sourcePdfPath(input.folderPath), input.pdfBytes);
+}
+
+async function sourceReference(input: DistillInput): Promise<{ pdfPath: string; originPath?: string }> {
+  const copy = sourcePdfPath(input.folderPath);
+  try {
+    await access(copy);
+  } catch {
+    return { pdfPath: input.pdfPath };
+  }
+  if (samePath(input.pdfPath, copy)) {
+    return { pdfPath: copy };
+  }
+  return { pdfPath: copy, originPath: input.pdfPath };
+}
+
 async function writeManifest(input: DistillInput, slices: DistillSlice[]): Promise<void> {
   await queueManifest(async () => {
     let previous = '';
@@ -526,9 +670,11 @@ async function writeManifest(input: DistillInput, slices: DistillSlice[]): Promi
     } catch {
       previous = '';
     }
+    const source = await sourceReference(input);
     const body = nextManifestText(previous, {
       schemaVersion: 1,
-      pdfPath: input.pdfPath,
+      pdfPath: source.pdfPath,
+      ...(source.originPath === undefined ? {} : { originPath: source.originPath }),
       title: input.title,
       slices: slices.map((slice) => {
         const stored: Record<string, unknown> = {
@@ -620,7 +766,7 @@ function readStoredManifest(
   };
 }
 
-function reopenedSlice(item: StoredSlice, board: Board | undefined): DistillSlice {
+function reopenedSlice(item: StoredSlice, board: Board | undefined, listings: ListingMark[]): DistillSlice {
   const base = {
     id: item.id,
     title: item.title,
@@ -634,6 +780,7 @@ function reopenedSlice(item: StoredSlice, board: Board | undefined): DistillSlic
       status: 'done',
       ...(item.modelId ? { modelId: item.modelId } : {}),
       board,
+      ...(listings.length > 0 ? { listings } : {}),
     };
   }
   if (item.status === 'failed') {
@@ -670,24 +817,36 @@ export async function openBook(folderPath: string): Promise<OpenBookResult> {
   }
   let pdfBytes = new Uint8Array();
   let pdfMissing = false;
+  let pdfPath = stored.pdfPath;
+  const copy = sourcePdfPath(folderPath);
   try {
-    pdfBytes = new Uint8Array(await readFile(stored.pdfPath));
+    pdfBytes = new Uint8Array(await readFile(copy));
+    pdfPath = copy;
   } catch (error) {
     const code = error instanceof Error && 'code' in error ? error.code : undefined;
     if (code !== 'ENOENT') {
       throw error;
     }
-    pdfMissing = true;
+    try {
+      pdfBytes = new Uint8Array(await readFile(stored.pdfPath));
+    } catch (storedError) {
+      const storedCode = storedError instanceof Error && 'code' in storedError ? storedError.code : undefined;
+      if (storedCode !== 'ENOENT') {
+        throw storedError;
+      }
+      pdfMissing = true;
+    }
   }
   const slices: DistillSlice[] = [];
   for (const item of stored.slices) {
     const board = await loadValidBoard(folderPath, item.id, item.pageStart, item.pageEnd);
-    slices.push(reopenedSlice(item, board));
+    const listings = board && !pdfMissing ? await listingMarks(pdfBytes, item.pageStart, item.pageEnd, board) : [];
+    slices.push(reopenedSlice(item, board, listings));
   }
   await writeManifest(
     {
       folderPath,
-      pdfPath: stored.pdfPath,
+      pdfPath,
       title: stored.title,
       modelId: '',
       modelParams: [],
@@ -711,7 +870,7 @@ export async function openBook(folderPath: string): Promise<OpenBookResult> {
   }
   return {
     status: 'opened',
-    pdfPath: stored.pdfPath,
+    pdfPath,
     title: stored.title,
     pdfMissing,
     pdfBytes,
@@ -736,6 +895,54 @@ async function writeAccepted(
   await writeFile(join(input.folderPath, 'notes', `${sliceId}.md`), noteFor(board), 'utf8');
   await rm(join(input.folderPath, 'rejects', `${sliceId}.txt`), { force: true });
   await writeManifest(input, slices);
+}
+
+// Replaces the section's figure files with crops of the page JPEGs the model saw.
+// A crop that cannot be read or written is dropped and does not fail the slice.
+async function writeFigures(
+  folderPath: string,
+  sectionId: string,
+  crops: FigureCrop[],
+  workspace: string,
+): Promise<BoardFigure[]> {
+  const directory = join(folderPath, 'figures');
+  const pattern = figureFilePattern(sectionId);
+  let existing: string[] = [];
+  try {
+    existing = await readdir(directory);
+  } catch {
+    existing = [];
+  }
+  for (const name of existing.filter((entry) => pattern.test(entry))) {
+    try {
+      await rm(join(directory, name), { force: true });
+    } catch {
+      // A locked old figure must not prevent writing its replacements.
+    }
+  }
+  const figures: BoardFigure[] = [];
+  for (const figure of crops) {
+    const file = `figures/${sectionId}-${figures.length + 1}.jpg`;
+    try {
+      const page = await readFile(join(workspace, `page-${figure.page}.jpg`));
+      const jpeg = await cropPageImage(page, figure.crop);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(folderPath, file), jpeg);
+    } catch {
+      continue;
+    }
+    figures.push({ caption: figure.caption, page: figure.page, file });
+  }
+  return figures;
+}
+
+async function acceptedBoard(
+  folderPath: string,
+  sectionId: string,
+  outcome: { board: Board; figures: FigureCrop[] },
+  workspace: string,
+): Promise<Board> {
+  return withFigures(outcome.board, await writeFigures(folderPath, sectionId, outcome.figures, workspace));
 }
 
 async function writeReject(folderPath: string, sectionId: string, rejection: Rejection): Promise<void> {
@@ -828,7 +1035,10 @@ function judgeReply(
   if (detail !== undefined) {
     return { failure: 'shape', detail, reply: text };
   }
-  return { board: interpreted.board };
+  return {
+    board: interpreted.board,
+    figures: replyFigures(interpreted.json, target.pageStart, target.pageEnd),
+  };
 }
 
 async function askAgent(
@@ -913,10 +1123,16 @@ export async function distillQueue(
     ...slice,
     status: slice.status ?? 'queued',
   }));
+  for (const slice of slices) {
+    if (slice.status === 'done' && slice.board && !slice.listings) {
+      slice.listings = await listingMarks(input.pdfBytes, slice.pageStart, slice.pageEnd, slice.board);
+    }
+  }
   const notify = (): void => {
     onProgress(slices.map((slice) => ({ ...slice })));
   };
   await mkdir(input.folderPath, { recursive: true });
+  await keepSourcePdf(input);
   await writeManifest(input, slices);
 
   const wanted = (slice: DistillSlice): boolean => slice.checked && slice.status !== 'done';
@@ -947,6 +1163,7 @@ export async function distillQueue(
       if (existing) {
         target.status = 'done';
         target.board = existing;
+        target.listings = await listingMarks(input.pdfBytes, target.pageStart, target.pageEnd, existing);
         await writeManifest(input, slices);
         notify();
         continue;
@@ -975,12 +1192,15 @@ export async function distillQueue(
           notify();
           stop = outcome.failure === 'cancelled';
         } else {
+          const board = await acceptedBoard(input.folderPath, target.id, outcome, workspace.dir);
           target.status = 'done';
           delete target.attempt;
           delete target.failureDetail;
           target.modelId = input.modelId;
-          target.board = outcome.board;
-          await writeAccepted(input, slices, target.id, outcome.board);
+          target.board = board;
+          target.boardRevision = nextBoardRevision();
+          target.listings = markListings(read.listings, board);
+          await writeAccepted(input, slices, target.id, board);
           notify();
         }
       } finally {
@@ -1031,11 +1251,11 @@ export async function redoSlice(input: DistillInput, sectionId: string): Promise
         ...(outcome.detail ? { failureDetail: outcome.detail } : {}),
       };
     }
-    const board = outcome.board;
     const opened = await openBook(input.folderPath);
     if (opened.status !== 'opened') {
       return { status: 'kept' };
     }
+    const board = await acceptedBoard(input.folderPath, sectionId, outcome, workspace.dir);
     const slices = opened.slices.map((slice) => {
       if (slice.id !== sectionId) {
         return slice;
@@ -1049,6 +1269,8 @@ export async function redoSlice(input: DistillInput, sectionId: string): Promise
         status: 'done' as const,
         modelId: input.modelId,
         board,
+        boardRevision: nextBoardRevision(),
+        listings: markListings(read.listings, board),
       };
     });
     await writeAccepted(input, slices, sectionId, board);

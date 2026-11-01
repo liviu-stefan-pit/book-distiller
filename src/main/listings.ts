@@ -1,12 +1,7 @@
-import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { pdfWorkerSrc } from './pdfWorker';
 
-const nodeRequire = createRequire(import.meta.url);
-
-GlobalWorkerOptions.workerSrc = pathToFileURL(
-  nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
-).href;
+GlobalWorkerOptions.workerSrc = pdfWorkerSrc();
 
 type PdfTextItem = {
   str?: string;
@@ -119,4 +114,36 @@ export async function requiredListings(
   pageEnd: number,
 ): Promise<string[]> {
   return (await readSlice(bytes, pageStart, pageEnd)).listings;
+}
+
+export type ListingMark = { text: string; omitted: boolean };
+
+function collapse(text: string): string {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+// A listing is kept when the board's code holds it, whitespace aside. Anything else is omitted.
+export function markListings(listings: string[], board: { code: Array<{ source: string }> }): ListingMark[] {
+  const sources = board.code.map((block) => collapse(block.source));
+  return listings.map((text) => {
+    const wanted = collapse(text);
+    return { text, omitted: wanted === '' || !sources.some((source) => source.includes(wanted)) };
+  });
+}
+
+// What the reader sees beside a board. Nothing is stored; a slice the detector cannot read shows none.
+export async function listingMarks(
+  bytes: Uint8Array,
+  pageStart: number,
+  pageEnd: number,
+  board: { code: Array<{ source: string }> },
+): Promise<ListingMark[]> {
+  if (bytes.byteLength === 0) {
+    return [];
+  }
+  try {
+    return markListings(await requiredListings(bytes, pageStart, pageEnd), board);
+  } catch {
+    return [];
+  }
 }

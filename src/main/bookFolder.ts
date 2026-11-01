@@ -57,7 +57,7 @@ export async function chooseExistingBook(): Promise<FolderChoice> {
 export async function resolveBookFolder(outputPath: string, pdfPath: string, title: string): Promise<string> {
   await mkdir(outputPath, { recursive: true });
   const own = await peekManifest(outputPath);
-  if (own.kind === 'ready' && samePath(own.pdfPath, pdfPath)) {
+  if (own.kind === 'ready' && matchesBook(own, pdfPath)) {
     return outputPath;
   }
   const existing = await findChildBook(outputPath, pdfPath, title);
@@ -131,7 +131,7 @@ async function findChildBook(outputPath: string, pdfPath: string, title: string)
       continue;
     }
     const manifest = await peekManifest(join(outputPath, entry.name));
-    if (manifest.kind === 'ready' && samePath(manifest.pdfPath, pdfPath)) {
+    if (manifest.kind === 'ready' && matchesBook(manifest, pdfPath)) {
       matches.push(entry.name);
     }
   }
@@ -156,7 +156,7 @@ async function canUseBookDirectory(folderPath: string, pdfPath: string): Promise
   }
   const manifest = await peekManifest(folderPath);
   if (manifest.kind === 'ready') {
-    return samePath(manifest.pdfPath, pdfPath);
+    return matchesBook(manifest, pdfPath);
   }
   if (manifest.kind === 'invalid') {
     return false;
@@ -170,7 +170,7 @@ async function canUseBookDirectory(folderPath: string, pdfPath: string): Promise
 
 async function peekManifest(
   folderPath: string,
-): Promise<{ kind: 'absent' } | { kind: 'invalid' } | { kind: 'ready'; pdfPath: string }> {
+): Promise<{ kind: 'absent' } | { kind: 'invalid' } | { kind: 'ready'; pdfPath: string; originPath?: string }> {
   let text: string;
   try {
     text = await readFile(join(folderPath, 'book-manifest.json'), 'utf8');
@@ -182,14 +182,25 @@ async function peekManifest(
     return { kind: 'invalid' };
   }
   try {
-    const manifest = JSON.parse(text) as { schemaVersion?: unknown; pdfPath?: unknown };
+    const manifest = JSON.parse(text) as { schemaVersion?: unknown; pdfPath?: unknown; originPath?: unknown };
     if (manifest.schemaVersion !== 1 || typeof manifest.pdfPath !== 'string') {
       return { kind: 'invalid' };
     }
-    return { kind: 'ready', pdfPath: manifest.pdfPath };
+    return {
+      kind: 'ready',
+      pdfPath: manifest.pdfPath,
+      ...(typeof manifest.originPath === 'string' ? { originPath: manifest.originPath } : {}),
+    };
   } catch {
     return { kind: 'invalid' };
   }
+}
+
+function matchesBook(manifest: { pdfPath: string; originPath?: string }, pdfPath: string): boolean {
+  if (samePath(manifest.pdfPath, pdfPath)) {
+    return true;
+  }
+  return manifest.originPath !== undefined && samePath(manifest.originPath, pdfPath);
 }
 
 function samePath(left: string, right: string): boolean {

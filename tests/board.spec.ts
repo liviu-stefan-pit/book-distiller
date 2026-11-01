@@ -1,8 +1,12 @@
-import { expect, test } from '@playwright/test';
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { example, launchReady, numberedRuleBoard, secret } from './boardLaunch';
+import { requiredListings } from '../src/main/listings';
+import { example, launchReady, numberedRuleBoard, openSettings, secret } from './boardLaunch';
+
+const electronPath = createRequire(import.meta.url)('electron') as string;
 
 async function workspaceText(dir: string): Promise<string> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -34,7 +38,8 @@ test('confirm writes the checked numbered-rule slice', async () => {
     await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByText('Flush the log before memory')).toBeVisible();
     await expect(window.getByText(example)).toBeVisible();
-    await readFile(path.join(folder, 'boards', 'a-numbered-rule.board.json'), 'utf8');
+    const board = await readFile(path.join(folder, 'boards', 'a-numbered-rule.board.json'), 'utf8');
+    expect(Object.keys(JSON.parse(board) as Record<string, unknown>)).not.toContain('figures');
     await readFile(path.join(folder, 'notes', 'a-numbered-rule.md'), 'utf8');
     await expect(access(path.join(folder, 'boards', 'a-listing.board.json'))).rejects.toThrow();
     expect((await readFile(agentLog, 'utf8')).trim()).toBe(
@@ -112,7 +117,7 @@ test('a reply that omits a listing is accepted on the first call and kept', asyn
   try {
     await window.getByRole('listitem').nth(1).getByRole('checkbox').click();
     await window.getByRole('button', { name: 'Confirm' }).click();
-    await expect(window.getByText('wal.append(key, val)?;')).toBeVisible();
+    await expect(window.getByText('wal.append(key, val)?;', { exact: true })).toBeVisible();
     await readFile(path.join(folder, 'boards', 'a-listing.board.json'), 'utf8');
     expect((await readFile(agentLog, 'utf8')).trim().split(/\n/)).toEqual([
       '{"modelId":"north-model","sectionId":"a-listing"}',
@@ -403,6 +408,9 @@ test('the numbered-rule instructions name the page images and leave out filler',
     expect(text).toContain(
       'It leaves out conversational filler, anecdotes that teach no rule, historical trivia, and repeated intros.',
     );
+    expect(text).toContain(
+      'A figure is a diagram, table, or picture on the page that teaches, not a code listing and not ordinary prose. figures is an array. Each figure has caption, page, and crop. caption is the book\'s caption when the page has one, otherwise a short name of the picture. page is the PDF page index. crop is the picture\'s box on that page image, from the top left, as fractions x, y, width, and height, each from 0 to 1. Omit figures when the slice has no such picture.',
+    );
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });
@@ -607,6 +615,337 @@ test('a later accepted board leaves no reject file', async () => {
     await window.getByRole('button', { name: 'Continue' }).click();
     await expect(window.getByText(example)).toBeVisible();
     await expect(access(path.join(folder, 'rejects', 'a-numbered-rule.txt'))).rejects.toThrow();
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+const bookletBytes = async (): Promise<Uint8Array> =>
+  new Uint8Array(await readFile(path.join(process.cwd(), 'fixtures/booklet.pdf')));
+
+async function detectedListing(): Promise<string> {
+  const found = await requiredListings(await bookletBytes(), 3, 4);
+  expect(found.length).toBeGreaterThan(0);
+  return found[0];
+}
+
+async function distillListingSlice(source: string): Promise<{
+  dir: string;
+  folder: string;
+  app: ElectronApplication;
+  window: Page;
+}> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const agentFile = path.join(dir, 'agent.json');
+  await writeFile(agentFile, JSON.stringify({ replies: [JSON.stringify(listingBoard(source))] }));
+  const { app, window, folder } = await launchReady(dir, {
+    BOOK_DISTILLER_AGENT_FILE: agentFile,
+    BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
+  });
+  await window.getByRole('listitem').nth(1).getByRole('checkbox').click();
+  await window.getByRole('button', { name: 'Confirm' }).click();
+  await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
+  await expect(window.getByRole('listitem').filter({ hasText: 'A listing' })).toContainText('done');
+  return { dir, folder, app, window };
+}
+
+test('a board that keeps the detected listing shows it without an omitted mark', async () => {
+  const listing = await detectedListing();
+  const { dir, folder, app, window } = await distillListingSlice(listing);
+  try {
+    await expect(window.getByText('Listings on the page', { exact: true })).toBeVisible();
+    await expect(window.locator('.page-listings pre')).toHaveText(listing);
+    await expect(window.getByText('Omitted', { exact: true })).toHaveCount(0);
+    await readFile(path.join(folder, 'boards', 'a-listing.board.json'), 'utf8');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a board that drops the detected listing marks it omitted and the slice stays done', async () => {
+  const listing = await detectedListing();
+  const { dir, folder, app, window } = await distillListingSlice('unrelated();');
+  try {
+    await expect(window.getByText('Listings on the page', { exact: true })).toBeVisible();
+    await expect(window.locator('.page-listings pre')).toHaveText(listing);
+    await expect(window.getByText('Omitted', { exact: true })).toBeVisible();
+    const row = window.getByRole('listitem').filter({ hasText: 'A listing' });
+    await expect(row).toContainText('done');
+    await expect(row).not.toContainText('failed');
+    const board = await readFile(path.join(folder, 'boards', 'a-listing.board.json'), 'utf8');
+    expect(board).not.toContain('Omitted');
+    expect(board).not.toContain('Listings on the page');
+    expect(await readFile(path.join(folder, 'book-manifest.json'), 'utf8')).not.toContain('Listings on the page');
+
+    await app.close();
+    const reopened = await reopenBook(dir, folder);
+    try {
+      await expect(reopened.window.getByText('Listings on the page', { exact: true })).toBeVisible();
+      await expect(reopened.window.getByText('Omitted', { exact: true })).toBeVisible();
+    } finally {
+      await reopened.app.close();
+    }
+  } finally {
+    await app.close().catch(() => undefined);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a slice with no monospace listing shows no listings section', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const agentFile = path.join(dir, 'agent.json');
+  await writeFile(agentFile, JSON.stringify({ replies: [JSON.stringify(numberedRuleBoard())] }));
+  const { app, window } = await launchReady(dir, {
+    BOOK_DISTILLER_AGENT_FILE: agentFile,
+    BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
+  });
+  try {
+    await window.getByRole('button', { name: 'Confirm' }).click();
+    await expect(window.getByText(example)).toBeVisible();
+    await expect(window.getByText('Listings on the page')).toHaveCount(0);
+    await expect(window.getByText('Omitted', { exact: true })).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an empty board still shows the detected listing as omitted', async () => {
+  const listing = await detectedListing();
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const agentFile = path.join(dir, 'agent.json');
+  const empty = { ...(listingBoard('') as Record<string, unknown>), points: [], code: [] };
+  await writeFile(agentFile, JSON.stringify({ replies: [JSON.stringify(empty)] }));
+  const { app, window } = await launchReady(dir, {
+    BOOK_DISTILLER_AGENT_FILE: agentFile,
+    BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
+  });
+  try {
+    await window.getByRole('listitem').nth(1).getByRole('checkbox').click();
+    await window.getByRole('button', { name: 'Confirm' }).click();
+    await expect(window.getByText('Those pages had no technical content.', { exact: true })).toBeVisible();
+    await expect(window.getByText('Listings on the page', { exact: true })).toBeVisible();
+    await expect(window.locator('.page-listings pre')).toHaveText(listing);
+    await expect(window.getByText('Omitted', { exact: true })).toBeVisible();
+    await expect(window.getByRole('listitem').filter({ hasText: 'A listing' })).toContainText('done');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function reopenBook(dir: string, folder: string): Promise<{ app: ElectronApplication; window: Page }> {
+  const userData = path.join(dir, 'user-data-reopen');
+  await mkdir(userData);
+  const app = await electron.launch({
+    executablePath: electronPath,
+    args: [path.join(process.cwd(), 'out/main/index.js')],
+    env: {
+      ...process.env,
+      BOOK_DISTILLER_VAULT: 'memory',
+      BOOK_DISTILLER_USER_DATA: userData,
+      BOOK_DISTILLER_CATALOG_FILE: path.join(dir, 'catalog.json'),
+      BOOK_DISTILLER_AGENT_CONCURRENCY: '1',
+    },
+  });
+  const window = await app.firstWindow();
+  await app.evaluate(({ dialog }, chosen: string) => {
+    dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
+  }, folder);
+  await openSettings(window);
+  await window.getByRole('button', { name: 'Choose a folder' }).click();
+  await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
+  return { app, window };
+}
+
+function figureReply(figures: unknown[], content: { points?: unknown[]; code?: unknown[] } = {}): string {
+  return JSON.stringify({ ...(listingBoard('wal.append(key, val)?;') as Record<string, unknown>), ...content, figures });
+}
+
+const fullPage = { x: 0, y: 0, width: 1, height: 1 };
+
+async function distillFigureSlice(
+  ...replies: string[]
+): Promise<{ dir: string; folder: string; app: ElectronApplication; window: Page }> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const agentFile = path.join(dir, 'agent.json');
+  await writeFile(agentFile, JSON.stringify({ replies }));
+  const { app, window, folder } = await launchReady(dir, {
+    BOOK_DISTILLER_AGENT_FILE: agentFile,
+    BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
+  });
+  await window.getByRole('listitem').nth(1).getByRole('checkbox').click();
+  await window.getByRole('button', { name: 'Confirm' }).click();
+  await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
+  await expect(window.getByRole('listitem').filter({ hasText: 'A listing' })).toContainText('done');
+  return { dir, folder, app, window };
+}
+
+test('a full-page figure is cropped into the book folder, the note, and the board', async () => {
+  const { dir, folder, app, window } = await distillFigureSlice(
+    figureReply([{ caption: 'Write path', page: 4, crop: fullPage }]),
+  );
+  try {
+    const jpeg = await readFile(path.join(folder, 'figures', 'a-listing-1.jpg'));
+    expect(jpeg.subarray(0, 2).toString('hex')).toBe('ffd8');
+    expect(jpeg.byteLength).toBeGreaterThan(100);
+
+    const boardText = await readFile(path.join(folder, 'boards', 'a-listing.board.json'), 'utf8');
+    const board = JSON.parse(boardText) as { schemaVersion: number; figures?: unknown };
+    expect(board.schemaVersion).toBe(1);
+    expect(board.figures).toEqual([{ caption: 'Write path', page: 4, file: 'figures/a-listing-1.jpg' }]);
+    expect(boardText).not.toContain('crop');
+    expect(boardText).not.toContain('data:');
+    expect(boardText).not.toContain('base64');
+
+    const note = await readFile(path.join(folder, 'notes', 'a-listing.md'), 'utf8');
+    expect(note).toContain('## Figures');
+    expect(note).toContain('Write path');
+    expect(note).toContain('Page 4');
+    expect(note).toContain('../figures/a-listing-1.jpg');
+
+    const figures = window.getByRole('region', { name: 'Figures' });
+    await expect(figures.getByRole('heading', { name: 'Figures' })).toBeVisible();
+    await expect(figures.getByText('Write path', { exact: true })).toBeVisible();
+    const image = figures.getByRole('img', { name: 'Write path' });
+    await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(100);
+    const order = await window.locator('.board > section').evaluateAll((sections) =>
+      sections.map((section) => section.getAttribute('aria-label') ?? section.className),
+    );
+    expect(order.indexOf('Figures')).toBeGreaterThan(order.indexOf('code'));
+    expect(order.indexOf('Figures')).toBeLessThan(order.indexOf('Listings on the page'));
+    await figures.getByRole('button', { name: 'Page 4' }).click();
+    await expect(window.getByRole('complementary', { name: 'Page 4' })).toBeVisible();
+
+    await app.close();
+    const reopened = await reopenBook(dir, folder);
+    try {
+      await reopened.window.getByRole('button', { name: 'A listing' }).click();
+      const again = reopened.window.getByRole('region', { name: 'Figures' });
+      await expect(again.getByText('Write path', { exact: true })).toBeVisible();
+      await expect(again.getByRole('img', { name: 'Write path' })).toBeVisible();
+    } finally {
+      await reopened.app.close();
+    }
+  } finally {
+    await app.close().catch(() => undefined);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a figure crop with zero width is dropped and the board is still accepted', async () => {
+  const { dir, folder, app, window } = await distillFigureSlice(
+    figureReply([{ caption: 'Write path', page: 4, crop: { x: 0, y: 0, width: 0, height: 1 } }]),
+  );
+  try {
+    await expect(window.getByRole('heading', { name: 'Append the log before memory' })).toBeVisible();
+    await expect(access(path.join(folder, 'figures', 'a-listing-1.jpg'))).rejects.toThrow();
+    const board = JSON.parse(await readFile(path.join(folder, 'boards', 'a-listing.board.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(board)).not.toContain('figures');
+    await expect(window.getByRole('region', { name: 'Figures' })).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a redo removes that section\'s older figure files and keeps another section\'s', async () => {
+  const { dir, folder, app, window } = await distillFigureSlice(
+    figureReply([{ caption: 'Write path', page: 4, crop: fullPage }]),
+    figureReply([]),
+  );
+  try {
+    await readFile(path.join(folder, 'figures', 'a-listing-1.jpg'));
+    await writeFile(path.join(folder, 'figures', 'a-listing-9.jpg'), 'stale');
+    await writeFile(path.join(folder, 'figures', 'a-listing-extra-1.jpg'), 'another section');
+    await window.getByRole('button', { name: 'Redo' }).click();
+    await expect(window.getByRole('region', { name: 'Figures' })).toHaveCount(0);
+    await expect(window.getByRole('heading', { name: 'Append the log before memory' })).toBeVisible();
+    await expect(access(path.join(folder, 'figures', 'a-listing-1.jpg'))).rejects.toThrow();
+    await expect(access(path.join(folder, 'figures', 'a-listing-9.jpg'))).rejects.toThrow();
+    expect(await readFile(path.join(folder, 'figures', 'a-listing-extra-1.jpg'), 'utf8')).toBe('another section');
+    expect(await readFile(path.join(folder, 'boards', 'a-listing.board.json'), 'utf8')).not.toContain('"figures"');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a redo that recrops the same figure index shows the new image', async () => {
+  const { dir, folder, app, window } = await distillFigureSlice(
+    figureReply([{ caption: 'Write path', page: 4, crop: fullPage }]),
+    figureReply([{ caption: 'Write path', page: 4, crop: { x: 0, y: 0, width: 0.5, height: 0.25 } }]),
+  );
+  try {
+    const image = window.getByRole('region', { name: 'Figures' }).getByRole('img', { name: 'Write path' });
+    const size = (): Promise<string> =>
+      image.evaluate((element) => {
+        const img = element as HTMLImageElement;
+        return `${img.naturalWidth}x${img.naturalHeight}`;
+      });
+    await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(100);
+    const before = await size();
+    const figureFile = path.join(folder, 'figures', 'a-listing-1.jpg');
+    const firstCrop = await readFile(figureFile);
+    await window.getByRole('button', { name: 'Redo' }).click();
+    await expect
+      .poll(async () => {
+        try {
+          return (await readFile(figureFile)).equals(firstCrop);
+        } catch {
+          return true;
+        }
+      })
+      .toBe(false);
+    await expect(window.getByRole('button', { name: 'Redo' })).toBeEnabled();
+    await expect.poll(size).not.toBe(before);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a board whose only content is a figure does not say the pages had no technical content', async () => {
+  const { dir, folder, app, window } = await distillFigureSlice(
+    figureReply([{ caption: 'Write path', page: 3, crop: { x: 0.1, y: 0.1, width: 0.5, height: 0.4 } }], {
+      points: [],
+      code: [],
+    }),
+  );
+  try {
+    await expect(window.getByRole('region', { name: 'Figures' }).getByText('Write path', { exact: true })).toBeVisible();
+    await expect(window.getByText('Those pages had no technical content.')).toHaveCount(0);
+    const note = await readFile(path.join(folder, 'notes', 'a-listing.md'), 'utf8');
+    expect(note).not.toContain('Those pages had no technical content.');
+    expect(note).toContain('../figures/a-listing-1.jpg');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('search lists an unchecked slice that the run hides', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const agentFile = path.join(dir, 'agent.json');
+  await writeFile(agentFile, JSON.stringify({ replies: [JSON.stringify(numberedRuleBoard())] }));
+  const { app, window } = await launchReady(dir, {
+    BOOK_DISTILLER_AGENT_FILE: agentFile,
+    BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
+  });
+  try {
+    await window.getByRole('listitem').filter({ hasText: 'A listing' }).getByRole('checkbox').click();
+    await window.getByRole('button', { name: 'Confirm' }).click();
+    await expect(window.getByText(example)).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A listing' })).toHaveCount(0);
+    await window.getByRole('textbox', { name: 'Search' }).fill('a listing');
+    await expect(window.getByRole('button', { name: 'A listing' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toHaveCount(0);
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });

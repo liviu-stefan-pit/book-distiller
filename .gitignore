@@ -3,6 +3,7 @@
 !.env.example
 node_modules/
 out/
+release/
 test-results/
 playwright-report/
 .superpowers/

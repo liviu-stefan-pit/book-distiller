@@ -19,18 +19,19 @@ export interface BookDistillerApi {
   chooseModel: (modelId: string, modelParams: ModelParameterValue[]) => Promise<ModelSelection>;
   openBook: (folderPath: string) => Promise<OpenBookResult>;
   setChecks: (folderPath: string, checks: Array<{ id: string; checked: boolean }>) => Promise<void>;
-  distill: (input: DistillInput) => Promise<DistillResult>;
-  redo: (input: DistillInput, sectionId: string) => Promise<RedoResult>;
-  compose: (input: ComposeInput) => Promise<ComposeProgress>;
+  distill: (input: DistillInput, runId: number) => Promise<DistillResult>;
+  redo: (input: DistillInput, sectionId: string, runId: number) => Promise<RedoResult>;
+  compose: (input: ComposeInput, runId: number) => Promise<ComposeProgress>;
   openComposedPdf: (folderPath: string) => Promise<string>;
+  readFigure: (folderPath: string, file: string) => Promise<string>;
   cancelDistill: () => Promise<void>;
   minimizeWindow: () => void;
   toggleMaximizeWindow: () => void;
   closeWindow: () => void;
   onMaximized: (listener: (maximized: boolean) => void) => () => void;
   onTokenTotal: (listener: (total: number | null) => void) => () => void;
-  onDistillProgress: (listener: (slices: DistillSlice[]) => void) => () => void;
-  onComposeProgress: (listener: (progress: ComposeProgress) => void) => () => void;
+  onDistillProgress: (listener: (runId: number, slices: DistillSlice[]) => void) => () => void;
+  onComposeProgress: (listener: (runId: number, progress: ComposeProgress) => void) => () => void;
 }
 
 declare global {

@@ -125,7 +125,7 @@ test('reopen without a call', async () => {
     BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
   });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
@@ -170,7 +170,7 @@ test('Continue picks up the failed slice', async () => {
     BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
   });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await saveKey(window);
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
@@ -244,7 +244,7 @@ test('a failed redo keeps the open board', async () => {
     BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
   });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
     const boardBefore = await readFile(boardPath);
@@ -287,7 +287,7 @@ test('redo replaces the board only after it validates', async () => {
     BOOK_DISTILLER_AGENT_DELAY_MS: '2000',
   });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
     await window.getByRole('button', { name: 'Redo' }).click();
@@ -323,7 +323,7 @@ test('cancel during redo keeps the open board and shows cancelled', async () => 
     BOOK_DISTILLER_AFTER_REPLY_DELAY_MS: '2000',
   });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
     await window.getByRole('button', { name: 'Redo' }).click();
@@ -390,11 +390,11 @@ test('a bad schema is refused and a schema-2 board is not done', async () => {
   );
   const { app, window } = await launch(dir, {});
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, badManifest);
     await expect(window.getByText('This book folder could not be read.')).toBeVisible();
     await expect(window.getByRole('region', { name: 'Viewer' })).toHaveCount(0);
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, badBoard);
     await expect(window.getByRole('region', { name: 'Viewer' })).toBeVisible();
     await expect(window.getByRole('listitem').filter({ hasText: 'A numbered rule' })).not.toContainText('done');
@@ -416,7 +416,7 @@ test('a missing PDF still opens the board', async () => {
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   const { app, window } = await launch(dir, {});
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
     await expect(window.getByText('The PDF is missing.')).toHaveCount(0);
@@ -486,7 +486,7 @@ test('Continue keeps the done board and the unchecked failure', async () => {
     BOOK_DISTILLER_AGENT_DELAY_MS: '2000',
   });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await saveKey(window);
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
@@ -517,7 +517,7 @@ test('reopen opens the stored PDF page', async () => {
   await writeNumberedRuleBook(folder);
   const { app, window } = await launch(dir, {});
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
     await window.getByRole('button', { name: 'Page 2' }).first().click();
@@ -562,7 +562,7 @@ test('a missing PDF keeps the board and does not continue', async () => {
     BOOK_DISTILLER_WORK_ROOT: path.join(dir, 'work'),
   });
   try {
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await chooseFolder(app, window, folder);
     await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
     const boardBefore = await readFile(boardPath);
@@ -580,6 +580,201 @@ test('a missing PDF keeps the board and does not continue', async () => {
       }
     }
     expect(log).toBe('');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+function searchListingBoard(): unknown {
+  return {
+    schemaVersion: 1,
+    sectionId: 'a-listing',
+    sectionTitle: 'A listing',
+    pageStart: 3,
+    pageEnd: 4,
+    points: [
+      {
+        kind: 'mechanics',
+        title: 'Append the log before memory',
+        explanation: 'The listing writes the log, then memory.',
+        page: 3,
+      },
+    ],
+    code: [
+      {
+        title: 'put',
+        language: 'rust',
+        page: 3,
+        source: 'zebra_lookup(key)?;',
+        notes: [{ lines: '1', why: 'Quokka notes explain this call.' }],
+      },
+    ],
+  };
+}
+
+async function writeSearchBook(folder: string): Promise<void> {
+  await mkdir(path.join(folder, 'boards'), { recursive: true });
+  await writeFile(
+    path.join(folder, 'boards', 'a-numbered-rule.board.json'),
+    `${JSON.stringify(numberedRuleBoard(), null, 2)}\n`,
+  );
+  await writeFile(
+    path.join(folder, 'boards', 'a-listing.board.json'),
+    `${JSON.stringify(searchListingBoard(), null, 2)}\n`,
+  );
+  await writeFile(
+    path.join(folder, 'book-manifest.json'),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        pdfPath: booklet,
+        title: 'Distiller Booklet',
+        slices: [
+          { id: 'preface', title: 'Log preface', pageStart: 1, pageEnd: 1, checked: true, status: 'failed', failureReason: 'shape' },
+          { id: 'a-numbered-rule', title: 'A numbered rule', pageStart: 2, pageEnd: 2, checked: true, status: 'done', modelId: 'north-model' },
+          { id: 'a-listing', title: 'A listing', pageStart: 3, pageEnd: 4, checked: true, status: 'done', modelId: 'north-model' },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+async function openSearchBook(): Promise<{ app: ElectronApplication; window: Page; dir: string }> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const folder = path.join(dir, 'book');
+  await mkdir(folder);
+  await writeSearchBook(folder);
+  const { app, window } = await launch(dir, {});
+  await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
+  await chooseFolder(app, window, folder);
+  await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
+  return { app, window, dir };
+}
+
+test('search finds a slice by a unique point title and Enter opens its board', async () => {
+  const { app, window, dir } = await openSearchBook();
+  try {
+    const search = window.getByRole('textbox', { name: 'Search' });
+    await search.fill('Append the log');
+    await expect(window.getByRole('button', { name: 'A listing' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: 'Log preface' })).toHaveCount(0);
+    await search.press('Enter');
+    await expect(window.getByRole('heading', { name: 'Append the log before memory' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('search finds a slice by a unique code source and by a code note', async () => {
+  const { app, window, dir } = await openSearchBook();
+  try {
+    const search = window.getByRole('textbox', { name: 'Search' });
+    await search.fill('zebra_lookup');
+    await expect(window.getByRole('button', { name: 'A listing' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toHaveCount(0);
+    await search.fill('quokka notes');
+    await expect(window.getByRole('button', { name: 'A listing' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('search ignores case and trims the query', async () => {
+  const { app, window, dir } = await openSearchBook();
+  try {
+    const search = window.getByRole('textbox', { name: 'Search' });
+    await search.fill('  DURABLE ONLY after  ');
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A listing' })).toHaveCount(0);
+    await search.fill('durable only after');
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A listing' })).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an empty field shows every slice again', async () => {
+  const { app, window, dir } = await openSearchBook();
+  try {
+    const search = window.getByRole('textbox', { name: 'Search' });
+    await search.fill('zebra_lookup');
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toHaveCount(0);
+    await search.fill('   ');
+    await expect(window.getByRole('button', { name: 'Log preface' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A listing' })).toBeVisible();
+    await expect(window.getByText('No matches.', { exact: true })).toHaveCount(0);
+    await search.fill('');
+    await expect(window.getByRole('button', { name: 'A listing' })).toBeVisible();
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a query with no match says No matches.', async () => {
+  const { app, window, dir } = await openSearchBook();
+  try {
+    await window.getByRole('textbox', { name: 'Search' }).fill('zzzz-no-such-point');
+    await expect(window.getByText('No matches.', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: 'A listing' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: 'Log preface' })).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Enter skips a match that is not done and opens the next done match', async () => {
+  const { app, window, dir } = await openSearchBook();
+  try {
+    const search = window.getByRole('textbox', { name: 'Search' });
+    await window.getByRole('button', { name: 'A listing' }).click();
+    await expect(window.getByRole('heading', { name: 'Append the log before memory' })).toBeVisible();
+    await search.fill('log');
+    await expect(window.getByRole('button', { name: 'Log preface' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toBeVisible();
+    await search.press('Enter');
+    await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Enter opens no board when no match is done', async () => {
+  const { app, window, dir } = await openSearchBook();
+  try {
+    const search = window.getByRole('textbox', { name: 'Search' });
+    await search.fill('log preface');
+    await expect(window.getByRole('button', { name: 'Log preface' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'A numbered rule' })).toHaveCount(0);
+    await search.press('Enter');
+    await expect(window.getByRole('button', { name: 'Log preface' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: 'Flush the log before memory' })).toBeVisible();
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the launchpad has no search field', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const { app, window } = await launch(dir, {});
+  try {
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
+    await expect(window.getByRole('textbox', { name: 'Search' })).toHaveCount(0);
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });

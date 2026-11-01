@@ -60,7 +60,7 @@ test('a saved key lists the catalog models and hides the key', async () => {
   const { app, window } = await launchApp(userData, catalogFile);
   try {
     await expect(window.getByText('Drop a PDF')).toBeVisible();
-    await expect(window.getByText('Choose a PDF')).toBeVisible();
+    await expect(window.getByText('Choose a PDF', { exact: true })).toBeVisible();
     await expect(window.getByRole('button', { name: 'Start' })).toBeVisible();
     await expect(window.getByLabel('Cursor key')).toHaveCount(0);
     await expect(window.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
@@ -234,6 +234,62 @@ test('start stays off until the pdf, key, model, and folder are set', async () =
     await window.getByRole('button', { name: 'Choose a folder' }).click();
     await expect(window.getByText(unreadable)).toBeVisible();
     await expect(start).toBeDisabled();
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the launchpad names the first missing step until start is on', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const catalogFile = path.join(dir, 'catalog.json');
+  await writeFile(catalogFile, JSON.stringify({ models: ['north-model', 'south-model'] }));
+  const userData = path.join(dir, 'user-data');
+  const folder = path.join(dir, 'notes');
+  await mkdir(userData);
+  await mkdir(folder);
+  const { app, window } = await launchApp(userData, catalogFile);
+  const start = window.getByRole('button', { name: 'Start' });
+  const sentences = [
+    'Choose a PDF.',
+    'Save a Cursor key in Settings.',
+    'Choose a model in Settings.',
+    'Choose an output folder in Settings.',
+  ];
+  const expectOnly = async (shown: string | null): Promise<void> => {
+    for (const sentence of sentences) {
+      await expect(window.getByText(sentence, { exact: true })).toHaveCount(sentence === shown ? 1 : 0);
+    }
+  };
+  try {
+    await expect(start).toBeDisabled();
+    await expectOnly('Choose a PDF.');
+
+    await window.locator('input[type=file]').setInputFiles(path.join(process.cwd(), 'fixtures/booklet.pdf'));
+    await expect(window.getByText('Distiller Booklet')).toBeVisible();
+    await expect(start).toBeDisabled();
+    await expectOnly('Save a Cursor key in Settings.');
+
+    await openSettings(window);
+    await window.getByLabel('Cursor key').fill(secret);
+    await openSettings(window);
+    await window.getByRole('button', { name: 'Save' }).click();
+    await expect(window.getByRole('button', { name: 'Replace key' })).toBeVisible();
+    await expect(start).toBeDisabled();
+    await expectOnly('Choose a model in Settings.');
+
+    await openSettings(window);
+    await window.getByRole('combobox', { name: 'Model' }).selectOption('north-model');
+    await expect(start).toBeDisabled();
+    await expectOnly('Choose an output folder in Settings.');
+
+    await app.evaluate(({ dialog }, chosen: string) => {
+      dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [chosen] });
+    }, folder);
+    await openSettings(window);
+    await window.getByRole('button', { name: 'Choose a folder' }).click();
+    await expect(start).toBeEnabled();
+    await expectOnly(null);
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });

@@ -1,13 +1,8 @@
-import { createRequire } from 'node:module';
 import { basename } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { pdfWorkerSrc } from './pdfWorker';
 
-const nodeRequire = createRequire(import.meta.url);
-
-GlobalWorkerOptions.workerSrc = pathToFileURL(
-  nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
-).href;
+GlobalWorkerOptions.workerSrc = pdfWorkerSrc();
 
 export type PdfDecision =
   | { accepted: true; title: string; pageCount: number }
@@ -35,7 +30,7 @@ export async function inspectPdf(bytes: Uint8Array, fileName: string): Promise<P
     }
 
     if (pdf.numPages === 0 || textPages / pdf.numPages < minimumTextPageRatio) {
-      return { accepted: false, message: 'This file is incompatible.' };
+      return { accepted: false, message: 'This PDF has too little text to read.' };
     }
 
     const metadata = await pdf.getMetadata();

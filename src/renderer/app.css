@@ -147,6 +147,8 @@ main {
 }
 
 .topbar {
+  position: relative;
+  z-index: 20;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -576,12 +578,32 @@ button.primary:hover:not(:disabled) {
   grid-template-columns: 280px minmax(0, 1fr) minmax(280px, 36%);
 }
 
-.workspace > ul {
+.workspace > .slice-list {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border-right: 1px solid var(--border);
+}
+
+.slice-list > .search {
+  flex: none;
+  width: auto;
+  margin: 8px 12px;
+}
+
+.slice-list > .no-matches {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.slice-list > ul {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .workspace li,
@@ -1128,4 +1150,58 @@ button:focus-visible {
     animation: none;
     transition: none;
   }
+}
+
+.reading .figures {
+  margin-top: 36px;
+  min-width: 0;
+}
+
+.reading .figures figure {
+  margin: 0;
+}
+
+.reading .figures figure + figure {
+  margin-top: 28px;
+}
+
+.reading .figures img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.reading .figures figcaption {
+  margin-top: 10px;
+  color: var(--text-muted);
+}
+
+.reading .page-listings {
+  margin-top: 36px;
+  min-width: 0;
+}
+
+.reading .page-listings article + article {
+  margin-top: 20px;
+}
+
+.reading .page-listings pre code {
+  padding: 0 14px;
+  white-space: pre;
+}
+
+.reading .omitted-mark {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin: 0 0 10px;
+  padding: 0 8px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1;
 }
