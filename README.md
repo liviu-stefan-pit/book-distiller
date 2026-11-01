@@ -34,7 +34,7 @@ On Windows, from this repo: `npm install`, then `npm start`. `npm test` rebuilds
 
 ## Pack
 
-`npm run pack` writes a portable exe under `release/` named like `Book Distiller` plus the version (the file to send). Recipients need 64-bit Windows, internet, and their own Cursor key. They do not need Node. The exe is unsigned, so Windows SmartScreen may say it protected the PC; More info then Run anyway is how to open it. No installer.
+`npm run pack` writes a portable exe under `release/` named like `Book Distiller` plus the version (the file to send). Recipients need 64-bit Windows, internet, and their own Cursor key. They do not need Node. The exe is unsigned, so Windows SmartScreen may say it protected the PC; More info then Run anyway is how to open it. No installer. Pushing a vX.Y.Z tag publishes that portable exe on the repo's Releases page.
 
 ## License
 

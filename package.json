@@ -9,7 +9,8 @@
     "start": "electron-vite build && electron .",
     "test": "electron-vite build && playwright test",
     "typecheck": "tsc --noEmit",
-    "pack": "electron-vite build && electron-builder --win portable dir"
+    "pack": "electron-vite build && electron-builder --win portable dir",
+    "pack:release": "electron-vite build && electron-builder --win portable"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

@@ -1,0 +1,23 @@
+---
+description: How to publish a Windows GitHub Release for Book Distiller
+alwaysApply: true
+---
+
+# Publish a release
+
+A release is a GitHub Release of the unsigned Windows portable exe. Do not publish a GitHub Package.
+
+The workflow is `.github/workflows/release.yml`. It runs only on `windows-latest`, and only when a tag `vX.Y.Z` is pushed. `X`, `Y`, and `Z` are numbers, as in `v0.1.0`. The workflow sets the exe version from the tag. Do not bump `package.json` just to cut a release.
+
+The tag must point at a commit that already contains `.github/workflows/release.yml`. Push that commit before the tag. If the tag points at an older commit, GitHub will not build a release.
+
+When the user asks to publish a release:
+
+1. Commit the changes that belong in the release.
+2. Push the branch: `git push origin HEAD`
+3. Tag that same commit, using a version that is not already a tag: `git tag vX.Y.Z`
+4. Push only that tag: `git push origin vX.Y.Z`
+
+Use a new version each time. Do not move, delete, or reuse an existing tag. Do not force-push. The first release is `v0.1.0`; after that, increment the version.
+
+Push only when asked. Do not open a pull request unless asked.
