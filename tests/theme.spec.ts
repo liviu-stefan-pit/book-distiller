@@ -14,11 +14,14 @@ async function launchApp(): Promise<{ app: ElectronApplication; window: Page }> 
   return { app, window };
 }
 
-function radiusAtMost8(radius: string): boolean {
+function radiusAtMost14OrPill(radius: string): boolean {
   return radius
     .split(' ')
     .filter((part) => part.length > 0)
-    .every((part) => Number.parseFloat(part) <= 8);
+    .every((part) => {
+      const value = Number.parseFloat(part);
+      return value <= 14 || value >= 999;
+    });
 }
 
 test('the window uses a solid dark surface', async () => {
@@ -43,10 +46,10 @@ test('the window uses a solid dark surface', async () => {
       }
       return { root: read(root), drop: read(target), button: read(button) };
     });
-    expect(['rgb(9, 9, 11)', 'rgba(9, 9, 11, 1)']).toContain(surface.root.background);
+    expect(['rgb(19, 19, 20)', 'rgba(19, 19, 20, 1)']).toContain(surface.root.background);
     expect(surface.root.blur).not.toContain('blur');
     for (const item of [surface.drop, surface.button]) {
-      expect(radiusAtMost8(item.radius)).toBe(true);
+      expect(radiusAtMost14OrPill(item.radius)).toBe(true);
       expect(item.blur).not.toContain('blur');
     }
   } finally {

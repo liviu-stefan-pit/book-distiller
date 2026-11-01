@@ -2,7 +2,13 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'electron-vite';
 
 export default defineConfig({
-  main: {},
+  main: {
+    build: {
+      externalizeDeps: {
+        include: ['@napi-rs/canvas'],
+      },
+    },
+  },
   preload: {
     build: {
       rolldownOptions: {

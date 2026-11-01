@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openSettings } from './boardLaunch';
+import { openSettings, parameterizedCatalog } from './boardLaunch';
 
 const require = createRequire(import.meta.url);
 const electronPath = require('electron') as string;
@@ -467,6 +467,117 @@ test('a settings failure after the vault write leaves no key', async () => {
     await expect(second.window.getByRole('button', { name: 'Forget key' })).toHaveCount(0);
   } finally {
     await second.app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function readStoredSelection(userData: string): Promise<{ modelId?: string; modelParams?: unknown }> {
+  return JSON.parse(await readFile(path.join(userData, 'settings.json'), 'utf8')) as {
+    modelId?: string;
+    modelParams?: unknown;
+  };
+}
+
+test('a parameterized model shows its effort and fast controls at the default variant', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const catalogFile = path.join(dir, 'catalog.json');
+  await writeFile(catalogFile, JSON.stringify(parameterizedCatalog));
+  const userData = path.join(dir, 'user-data');
+  await mkdir(userData);
+  const { app, window } = await launchApp(userData, catalogFile);
+  try {
+    await openSettings(window);
+    await window.getByLabel('Cursor key').fill(secret);
+    await openSettings(window);
+    await window.getByRole('button', { name: 'Save' }).click();
+    await openSettings(window);
+    await expect(window.getByRole('option', { name: 'Effort Model' })).toHaveCount(1);
+    await expect(window.getByRole('option', { name: 'Plain Model' })).toHaveCount(1);
+    await window.getByRole('combobox', { name: 'Model' }).selectOption('effort-model');
+    const effort = window.getByRole('combobox', { name: 'Effort', exact: true });
+    const fast = window.getByRole('checkbox', { name: 'Fast' });
+    await expect(effort).toHaveValue('high');
+    await expect(effort.getByRole('option', { name: 'Low' })).toHaveCount(1);
+    await expect(effort.getByRole('option', { name: 'High' })).toHaveCount(1);
+    await expect(fast).toBeChecked();
+    await openSettings(window);
+    await window.getByRole('combobox', { name: 'Model' }).selectOption('plain-model');
+    await expect(window.getByRole('combobox', { name: 'Effort', exact: true })).toHaveCount(0);
+    await expect(window.getByRole('checkbox', { name: 'Fast' })).toHaveCount(0);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a relaunch remembers the chosen effort and fast values', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const catalogFile = path.join(dir, 'catalog.json');
+  await writeFile(catalogFile, JSON.stringify(parameterizedCatalog));
+  const userData = path.join(dir, 'user-data');
+  await mkdir(userData);
+  const first = await launchApp(userData, catalogFile);
+  try {
+    try {
+      await openSettings(first.window);
+      await first.window.getByLabel('Cursor key').fill(secret);
+      await openSettings(first.window);
+      await first.window.getByRole('button', { name: 'Save' }).click();
+      await openSettings(first.window);
+      await first.window.getByRole('combobox', { name: 'Model' }).selectOption('effort-model');
+      await first.window.getByRole('combobox', { name: 'Effort', exact: true }).selectOption('low');
+      await first.window.getByRole('checkbox', { name: 'Fast' }).uncheck();
+      await expect.poll(async () => (await readStoredSelection(userData)).modelParams).toEqual([
+        { id: 'effort', value: 'low' },
+        { id: 'fast', value: 'false' },
+      ]);
+    } finally {
+      await first.app.close();
+    }
+    const second = await launchApp(userData, catalogFile);
+    try {
+      await openSettings(second.window);
+      await expect(second.window.getByRole('combobox', { name: 'Model' })).toHaveValue('effort-model');
+      await expect(second.window.getByRole('combobox', { name: 'Effort', exact: true })).toHaveValue('low');
+      await expect(second.window.getByRole('checkbox', { name: 'Fast' })).not.toBeChecked();
+    } finally {
+      await second.app.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('saved params that the catalog does not allow fall back to the default variant', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'book-distiller-'));
+  const catalogFile = path.join(dir, 'catalog.json');
+  const userData = path.join(dir, 'user-data');
+  await writeFile(catalogFile, JSON.stringify(parameterizedCatalog));
+  await mkdir(userData);
+  await writeFile(
+    path.join(userData, 'settings.json'),
+    JSON.stringify({
+      modelId: 'effort-model',
+      modelParams: [
+        { id: 'effort', value: 'nope' },
+        { id: 'fast', value: 'maybe' },
+      ],
+      folderPath: '',
+    }),
+  );
+  await writeFile(path.join(userData, 'memory-vault.json'), JSON.stringify({ key: secret }));
+  const { app, window } = await launchApp(userData, catalogFile);
+  try {
+    await openSettings(window);
+    await expect(window.getByRole('combobox', { name: 'Model' })).toHaveValue('effort-model');
+    await expect(window.getByRole('combobox', { name: 'Effort', exact: true })).toHaveValue('high');
+    await expect(window.getByRole('checkbox', { name: 'Fast' })).toBeChecked();
+    await expect.poll(async () => (await readStoredSelection(userData)).modelParams).toEqual([
+      { id: 'effort', value: 'high' },
+      { id: 'fast', value: 'true' },
+    ]);
+  } finally {
+    await app.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

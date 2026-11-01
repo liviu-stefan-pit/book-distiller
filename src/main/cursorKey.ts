@@ -3,21 +3,33 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import {
+  parseCatalogBody,
+  parseModelList,
+  parseSavedParams,
+  resolveSelection,
+  type CatalogModel,
+  type ModelParameterValue,
+  type ModelSelection,
+} from '../modelSelection';
+
 export type SaveKeyResult =
-  | { status: 'saved'; modelIds: string[] }
+  | { status: 'saved'; models: CatalogModel[]; modelId: string; modelParams: ModelParameterValue[] }
   | { status: 'error'; message: string };
 
 export type Session = {
   hasKey: boolean;
-  modelIds: string[];
+  models: CatalogModel[];
   modelId: string;
+  modelParams: ModelParameterValue[];
   folderPath: string;
 };
 
 type Settings = {
+  models: CatalogModel[];
   modelId: string;
+  modelParams: ModelParameterValue[];
   folderPath: string;
-  modelIds: string[];
 };
 
 const vaultResource = 'Book Distiller';
@@ -25,18 +37,17 @@ const vaultUser = 'cursor';
 let settingsChain = Promise.resolve();
 
 export async function saveCursorKey(apiKey: string): Promise<SaveKeyResult> {
-  const listed = await listModelIds(apiKey);
+  const listed = await listCatalog(apiKey);
   if ('message' in listed) {
     return { status: 'error', message: listed.message };
   }
   const previous = await storedKey();
+  let saved: Settings;
   try {
     await storeKey(apiKey);
-    await updateSettings((settings) => {
-      settings.modelIds = listed.modelIds;
-      if (!settings.modelIds.includes(settings.modelId)) {
-        settings.modelId = '';
-      }
+    saved = await updateSettings((settings) => {
+      settings.models = listed.models;
+      reconcile(settings);
     });
   } catch {
     if (previous === undefined) {
@@ -46,21 +57,33 @@ export async function saveCursorKey(apiKey: string): Promise<SaveKeyResult> {
     }
     return { status: 'error', message: 'The key could not be saved.' };
   }
-  return { status: 'saved', modelIds: listed.modelIds };
+  return { status: 'saved', models: saved.models, modelId: saved.modelId, modelParams: saved.modelParams };
 }
 
 export async function forgetCursorKey(): Promise<void> {
   await removeStoredKey();
   await updateSettings((settings) => {
-    settings.modelIds = [];
+    settings.models = [];
     settings.modelId = '';
+    settings.modelParams = [];
   });
 }
 
-export async function rememberModel(modelId: string): Promise<void> {
-  await updateSettings((settings) => {
-    settings.modelId = modelId;
+/** Saves the model and its params together. Returns what was kept after checking the catalog. */
+export async function rememberModel(modelId: string, modelParams: ModelParameterValue[]): Promise<ModelSelection> {
+  const saved = await updateSettings((settings) => {
+    const selection = resolveSelection(settings.models, modelId, Array.isArray(modelParams) ? modelParams : []);
+    settings.modelId = selection.modelId;
+    settings.modelParams = selection.modelParams;
   });
+  return { modelId: saved.modelId, modelParams: saved.modelParams };
+}
+
+/** Keeps the saved model and params only as far as the catalog allows them. */
+function reconcile(settings: Settings): void {
+  const selection = resolveSelection(settings.models, settings.modelId, settings.modelParams);
+  settings.modelId = selection.modelId;
+  settings.modelParams = selection.modelParams;
 }
 
 export async function rememberFolder(folderPath: string): Promise<void> {
@@ -80,32 +103,76 @@ export async function loadSession(): Promise<Session> {
   const settings = await readSettings();
   const hasKey = await keyIsStored();
   if (!hasKey) {
-    return { hasKey: false, modelIds: [], modelId: '', folderPath: settings.folderPath };
+    return { hasKey: false, models: [], modelId: '', modelParams: [], folderPath: settings.folderPath };
   }
-  const modelId = settings.modelIds.includes(settings.modelId) ? settings.modelId : '';
-  return { hasKey: true, modelIds: settings.modelIds, modelId, folderPath: settings.folderPath };
+  const fresh = await refreshedCatalog();
+  let current: Settings;
+  try {
+    current = await updateSettings(
+      (next) => {
+        if (fresh) {
+          next.models = fresh;
+        }
+        reconcile(next);
+      },
+      { skipUnchanged: true },
+    );
+  } catch {
+    // A launch must still work when the reconciled selection cannot be written.
+    current = { ...settings, models: fresh ?? settings.models };
+    reconcile(current);
+  }
+  return {
+    hasKey: true,
+    models: current.models,
+    modelId: current.modelId,
+    modelParams: current.modelParams,
+    folderPath: current.folderPath,
+  };
 }
 
-async function listModelIds(apiKey: string): Promise<{ modelIds: string[] } | { message: string }> {
+/** The live catalog for the stored key, or undefined when it cannot be had. The cached catalog then stays. */
+async function refreshedCatalog(): Promise<CatalogModel[] | undefined> {
+  try {
+    const listed = await listCatalog(await readCursorKey());
+    return 'models' in listed ? listed.models : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function listCatalog(apiKey: string): Promise<{ models: CatalogModel[] } | { message: string }> {
   const catalogFile = process.env.BOOK_DISTILLER_CATALOG_FILE;
   if (catalogFile) {
     try {
-      const body = JSON.parse(await readFile(catalogFile, 'utf8')) as { models?: unknown; error?: unknown };
-      if (typeof body.error === 'string') {
+      const body = JSON.parse(await readFile(catalogFile, 'utf8')) as { error?: unknown };
+      if (typeof body === 'object' && body !== null && typeof body.error === 'string') {
         return { message: body.error };
       }
-      if (!Array.isArray(body.models) || body.models.some((model) => typeof model !== 'string')) {
+      const models = parseCatalogBody(body);
+      if (!models) {
         return { message: 'The key could not be saved.' };
       }
-      return { modelIds: body.models };
+      return { models };
     } catch {
       return { message: 'The key could not be saved.' };
     }
   }
   try {
     const { Cursor } = await import('@cursor/sdk');
-    const models = await Cursor.models.list({ apiKey });
-    return { modelIds: models.map((model) => model.id) };
+    const listed = await Cursor.models.list({ apiKey });
+    const models = parseModelList(
+      listed.map((model) => ({
+        id: model.id,
+        displayName: model.displayName,
+        parameters: model.parameters ?? [],
+        variants: model.variants ?? [],
+      })),
+    );
+    if (!models) {
+      return { message: 'The key could not be saved.' };
+    }
+    return { models };
   } catch (error) {
     const message = error instanceof Error && error.message !== '' ? error.message : 'The key could not be saved.';
     return { message };
@@ -185,14 +252,23 @@ function settingsPath(): string {
 
 async function readSettings(): Promise<Settings> {
   try {
-    const body = JSON.parse(await readFile(settingsPath(), 'utf8')) as Partial<Settings>;
+    const body = JSON.parse(await readFile(settingsPath(), 'utf8')) as {
+      models?: unknown;
+      modelIds?: unknown;
+      modelId?: unknown;
+      modelParams?: unknown;
+      folderPath?: unknown;
+    };
+    // Older files only have modelIds, which are models without parameters.
+    const models = parseModelList(body.models) ?? parseModelList(body.modelIds) ?? [];
     return {
+      models,
       modelId: typeof body.modelId === 'string' ? body.modelId : '',
+      modelParams: parseSavedParams(body.modelParams),
       folderPath: typeof body.folderPath === 'string' ? body.folderPath : '',
-      modelIds: Array.isArray(body.modelIds) && body.modelIds.every((id) => typeof id === 'string') ? body.modelIds : [],
     };
   } catch {
-    return { modelId: '', folderPath: '', modelIds: [] };
+    return { models: [], modelId: '', modelParams: [], folderPath: '' };
   }
 }
 
@@ -231,11 +307,18 @@ async function removeStoredKey(): Promise<void> {
   await removePasswordVault();
 }
 
-function updateSettings(change: (settings: Settings) => void): Promise<void> {
-  const run = settingsChain.then(async () => {
+function updateSettings(
+  change: (settings: Settings) => void,
+  options: { skipUnchanged?: boolean } = {},
+): Promise<Settings> {
+  const run = settingsChain.then(async (): Promise<Settings> => {
     const settings = await readSettings();
+    const before = JSON.stringify(settings);
     change(settings);
-    await writeSettings(settings);
+    if (!options.skipUnchanged || JSON.stringify(settings) !== before) {
+      await writeSettings(settings);
+    }
+    return settings;
   });
   settingsChain = run.then(
     () => undefined,

@@ -1,11 +1,25 @@
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ModelParameterValue } from '../modelSelection';
 import { readCursorKey } from './cursorKey';
+import {
+  acquireSlotWorkspace,
+  agentConcurrency,
+  beginSession,
+  cancelWasRequested,
+  requestCancel as cancelHeldRun,
+  sendOnSlot,
+  summarizeSlot,
+} from './heldAgent';
 import { readSlice } from './listings';
+import { renderPageImages, type RenderedPage } from './pageImages';
 
 const keepEveryTechnicalDetail =
   'It keeps every technical rule, number, threshold, mechanism, edge case, and warning.';
+
+const pageStampRule =
+  'Every page is a JSON number taken from a line --- PAGE N ---. A bracketed printed page such as [ 14 ] is not a citation.';
 
 export type BoardPoint = {
   kind: string;
@@ -43,6 +57,7 @@ export type DistillSlice = {
   attempt?: number;
   modelId?: string;
   failureReason?: string;
+  failureDetail?: string;
   board?: Board;
 };
 
@@ -51,10 +66,11 @@ export type DistillInput = {
   pdfPath: string;
   title: string;
   modelId: string;
+  modelParams: ModelParameterValue[];
   pdfBytes: Uint8Array;
   slices: Array<
     Pick<DistillSlice, 'id' | 'title' | 'pageStart' | 'pageEnd' | 'checked'> &
-      Partial<Pick<DistillSlice, 'status' | 'modelId' | 'failureReason' | 'board'>>
+      Partial<Pick<DistillSlice, 'status' | 'modelId' | 'failureReason' | 'failureDetail' | 'board'>>
   >;
 };
 
@@ -197,7 +213,7 @@ function readCode(value: unknown): BoardCode | 'shape' {
   };
 }
 
-function readBoard(value: unknown): Board | 'shape' | undefined {
+function readBoard(value: unknown): Board | 'bad point' | 'bad code' | undefined {
   if (!isRecord(value) || !Array.isArray(value.points)) {
     return undefined;
   }
@@ -205,13 +221,13 @@ function readBoard(value: unknown): Board | 'shape' | undefined {
   for (const item of value.points) {
     const point = readPoint(item);
     if (point === 'shape') {
-      return 'shape';
+      return 'bad point';
     }
     points.push(point);
   }
   const code = readCodeList(value.code);
   if (code === 'shape') {
-    return 'shape';
+    return 'bad code';
   }
   return {
     schemaVersion: typeof value.schemaVersion === 'number' ? value.schemaVersion : 0,
@@ -242,43 +258,60 @@ function readCodeList(value: unknown): BoardCode[] | 'shape' {
   return code;
 }
 
-function interpret(text: string): { board: Board } | { failure: 'network' | 'shape' } {
+type Failure = 'shape' | 'network' | 'cancelled';
+
+type Rejection = { failure: Failure; detail?: string; reply: string };
+
+type Outcome = { board: Board } | Rejection;
+
+type AgentReply = { text: string; status?: string; errorMessage?: string };
+
+function interpret(text: string): { board: Board } | { failure: 'network' | 'shape'; detail?: string } {
   if (isNetworkReply(text)) {
     return { failure: 'network' };
   }
   const board = readBoard(firstJsonObject(text));
-  if (board === undefined || board === 'shape') {
-    return { failure: 'shape' };
+  if (board === undefined) {
+    return { failure: 'shape', detail: 'no board json' };
+  }
+  if (typeof board === 'string') {
+    return { failure: 'shape', detail: board };
   }
   return { board };
 }
 
-function instructions(): string {
+const pointFieldRule =
+  'A point has kind, title, explanation, and page. It has no text field. example, when present, is an object with text and page.';
+const codeFieldRule =
+  'A code block has title, language, page, source, and notes. notes is an array of objects with lines and why.';
+
+function instructions(pageStart: number, pageEnd: number): string {
   return [
     keepEveryTechnicalDetail,
     "It keeps the book's own example on the point it illustrates.",
-    'It copies every required listing verbatim and adds short line notes; those notes are the agent\u2019s words.',
+    `The attached images are PDF pages ${pageStart} through ${pageEnd}, in order. Image 1 is PDF page ${pageStart}.`,
+    'The image is the authority for what the page means. The text layer is the authority for code spelling when it agrees with the image.',
+    "Include the book's code when that code teaches, with its page, language, and short line notes. Those notes are the agent's words. Copy that code from the text layer when the text matches the page, and from the image otherwise.",
     'It leaves out conversational filler, anecdotes that teach no rule, historical trivia, and repeated intros.',
-    'It cites the PDF page from the page stamps.',
+    'Cite the PDF page index from the --- PAGE N --- stamps and from the image order. A printed folio in the corner is not a citation.',
+    pageStampRule,
     'It adds no example the book did not write.',
     'Reply with only the board JSON.',
     'schemaVersion is 1.',
     'Each point kind is must-remember, mechanics, or useful-later.',
     'example is present only when the book illustrates that point.',
+    pointFieldRule,
+    codeFieldRule,
   ].join('\n');
-}
-
-function collapseWhitespace(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
 }
 
 function pageInside(page: number, pageStart: number, pageEnd: number): boolean {
   return Number.isInteger(page) && page >= pageStart && page <= pageEnd;
 }
 
-function shapeRejects(board: Board, pageStart: number, pageEnd: number): boolean {
+function shapeDetail(board: Board, pageStart: number, pageEnd: number): string | undefined {
   if (board.schemaVersion !== 1) {
-    return true;
+    return 'schema version';
   }
   const pages = [board.pageStart, board.pageEnd];
   for (const point of board.points) {
@@ -290,37 +323,70 @@ function shapeRejects(board: Board, pageStart: number, pageEnd: number): boolean
   for (const block of board.code) {
     pages.push(block.page);
   }
-  return pages.some((page) => !pageInside(page, pageStart, pageEnd));
+  const outside = pages.find((page) => !pageInside(page, pageStart, pageEnd));
+  return outside === undefined ? undefined : `page ${outside} outside ${pageStart}-${pageEnd}`;
 }
 
-function listingsMatch(board: Board, listings: string[]): boolean {
-  const source = collapseWhitespace(board.code.map((block) => block.source).join('\n'));
-  return listings.every((listing) => source.includes(collapseWhitespace(listing)));
+function shapeRejects(board: Board, pageStart: number, pageEnd: number): boolean {
+  return shapeDetail(board, pageStart, pageEnd) !== undefined;
 }
 
-let temporaryWorkRoot: string | undefined;
+type SliceWorkspace = { dir: string; release: () => Promise<void> };
 
-async function prepareWorkspace(sectionId: string, text: string): Promise<string> {
+const keepWorkspace = async (): Promise<void> => undefined;
+
+// The fake reply file keeps one directory per section, and the call that made a temporary root releases it.
+// A real agent keeps one stable directory per pool slot for the agent's whole life.
+async function sliceDirectory(slot: number, sectionId: string): Promise<SliceWorkspace> {
+  if (!process.env.BOOK_DISTILLER_AGENT_FILE) {
+    return { dir: await acquireSlotWorkspace(slot), release: keepWorkspace };
+  }
   const configured = process.env.BOOK_DISTILLER_WORK_ROOT;
   const rooted = configured !== undefined && configured !== '';
   const root = rooted ? configured : await mkdtemp(join(tmpdir(), 'book-distiller-work-'));
-  temporaryWorkRoot = rooted ? undefined : root;
   const dir = join(root, sectionId);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'slice.txt'), text, 'utf8');
-  await writeFile(join(dir, 'instructions.md'), `${instructions()}\n`, 'utf8');
-  return dir;
-}
-
-async function releaseTemporaryWorkspace(): Promise<void> {
-  const root = temporaryWorkRoot;
-  temporaryWorkRoot = undefined;
-  if (root) {
-    await rm(root, { recursive: true, force: true });
+  if (rooted) {
+    return { dir, release: keepWorkspace };
   }
+  return {
+    dir,
+    release: async () => {
+      try {
+        await rm(root, { recursive: true, force: true });
+      } catch {
+        // A locked directory stays in place; it must not reject the queue.
+      }
+    },
+  };
 }
 
-async function nextReply(modelId: string, sectionId: string, workspace: string, prompt: string): Promise<string> {
+async function prepareWorkspace(
+  slot: number,
+  sectionId: string,
+  text: string,
+  pageStart: number,
+  pageEnd: number,
+): Promise<SliceWorkspace> {
+  const workspace = await sliceDirectory(slot, sectionId);
+  try {
+    await writeFile(join(workspace.dir, 'slice.txt'), text, 'utf8');
+    await writeFile(join(workspace.dir, 'instructions.md'), `${instructions(pageStart, pageEnd)}\n`, 'utf8');
+  } catch (error) {
+    await workspace.release();
+    throw error;
+  }
+  return workspace;
+}
+
+async function nextReply(
+  slot: number,
+  modelId: string,
+  modelParams: ModelParameterValue[],
+  sectionId: string,
+  prompt: string,
+  images: RenderedPage[],
+): Promise<AgentReply> {
   const logPath = process.env.BOOK_DISTILLER_AGENT_LOG;
   if (logPath) {
     await appendFile(logPath, `${JSON.stringify({ modelId, sectionId })}\n`, 'utf8');
@@ -331,17 +397,22 @@ async function nextReply(modelId: string, sectionId: string, workspace: string, 
     const replies = Array.isArray(body.replies) ? body.replies : [];
     const reply = replies[replyIndex];
     replyIndex += 1;
-    return typeof reply === 'string' ? reply : '';
+    return { text: typeof reply === 'string' ? reply : '' };
   }
   const apiKey = await readCursorKey();
-  const { Agent } = await import('@cursor/sdk');
-  const result = await Agent.prompt(prompt, {
-    apiKey,
-    model: { id: modelId },
-    local: { cwd: workspace },
-    tools: [],
+  const result = await sendOnSlot(slot, apiKey, modelId, modelParams, {
+    text: prompt,
+    images: images.map((image) => ({
+      data: image.jpeg.toString('base64'),
+      mimeType: 'image/jpeg',
+      dimension: { width: image.width, height: image.height },
+    })),
   });
-  return typeof result.result === 'string' ? result.result : '';
+  return {
+    text: typeof result.result === 'string' ? result.result : '',
+    status: result.status,
+    ...(result.error?.message ? { errorMessage: result.error.message } : {}),
+  };
 }
 
 function noteFor(board: Board): string {
@@ -377,11 +448,7 @@ function noteFor(board: Board): string {
   return `${lines.join('\n').trim()}\n`;
 }
 
-let cancelRequested = false;
-
-export function requestCancel(): void {
-  cancelRequested = true;
-}
+export const requestCancel = cancelHeldRun;
 
 function agentDelayMs(): number {
   const raw = process.env.BOOK_DISTILLER_AGENT_DELAY_MS;
@@ -399,7 +466,7 @@ async function waitForReply(): Promise<boolean> {
       setTimeout(resolve, delay);
     });
   }
-  return !cancelRequested;
+  return !cancelWasRequested();
 }
 
 function afterReplyDelayMs(): number {
@@ -425,15 +492,11 @@ async function loadValidBoard(
   sectionId: string,
   pageStart: number,
   pageEnd: number,
-  listings: string[] | undefined,
 ): Promise<Board | undefined> {
   try {
     const text = await readFile(join(folderPath, 'boards', `${sectionId}.board.json`), 'utf8');
     const board = readBoard(JSON.parse(text) as unknown);
-    if (board === undefined || board === 'shape' || shapeRejects(board, pageStart, pageEnd)) {
-      return undefined;
-    }
-    if (listings !== undefined && !listingsMatch(board, listings)) {
+    if (board === undefined || typeof board === 'string' || shapeRejects(board, pageStart, pageEnd)) {
       return undefined;
     }
     return board;
@@ -474,6 +537,9 @@ async function writeManifest(input: DistillInput, slices: DistillSlice[]): Promi
           if (slice.status === 'failed' && slice.failureReason) {
             stored.failureReason = slice.failureReason;
           }
+          if (slice.status === 'failed' && slice.failureDetail) {
+            stored.failureDetail = slice.failureDetail;
+          }
           return stored;
         }),
       },
@@ -492,6 +558,7 @@ type StoredSlice = {
   status: string;
   modelId?: string;
   failureReason?: string;
+  failureDetail?: string;
 };
 
 function readStoredSlice(value: unknown): StoredSlice | undefined {
@@ -518,6 +585,9 @@ function readStoredSlice(value: unknown): StoredSlice | undefined {
   }
   if (typeof value.failureReason === 'string') {
     slice.failureReason = value.failureReason;
+  }
+  if (typeof value.failureDetail === 'string') {
+    slice.failureDetail = value.failureDetail;
   }
   return slice;
 }
@@ -565,6 +635,7 @@ function reopenedSlice(item: StoredSlice, board: Board | undefined): DistillSlic
       ...base,
       status: 'failed',
       ...(item.failureReason ? { failureReason: item.failureReason } : {}),
+      ...(item.failureDetail ? { failureDetail: item.failureDetail } : {}),
     };
   }
   return { ...base, status: 'queued' };
@@ -604,10 +675,7 @@ export async function openBook(folderPath: string): Promise<OpenBookResult> {
   }
   const slices: DistillSlice[] = [];
   for (const item of stored.slices) {
-    const listings = pdfMissing
-      ? undefined
-      : (await readSlice(pdfBytes, item.pageStart, item.pageEnd)).listings;
-    const board = await loadValidBoard(folderPath, item.id, item.pageStart, item.pageEnd, listings);
+    const board = await loadValidBoard(folderPath, item.id, item.pageStart, item.pageEnd);
     slices.push(reopenedSlice(item, board));
   }
   await writeManifest(
@@ -616,6 +684,7 @@ export async function openBook(folderPath: string): Promise<OpenBookResult> {
       pdfPath: stored.pdfPath,
       title: stored.title,
       modelId: '',
+      modelParams: [],
       pdfBytes,
       slices: [],
     },
@@ -645,7 +714,139 @@ async function writeAccepted(
     'utf8',
   );
   await writeFile(join(input.folderPath, 'notes', `${sliceId}.md`), noteFor(board), 'utf8');
+  await rm(join(input.folderPath, 'rejects', `${sliceId}.txt`), { force: true });
   await writeManifest(input, slices);
+}
+
+async function writeReject(folderPath: string, sectionId: string, rejection: Rejection): Promise<void> {
+  const text = rejection.reply !== '' ? rejection.reply : (rejection.detail ?? '');
+  if (text === '') {
+    return;
+  }
+  await mkdir(join(folderPath, 'rejects'), { recursive: true });
+  await writeFile(join(folderPath, 'rejects', `${sectionId}.txt`), text, 'utf8');
+}
+
+const standsAlone =
+  'This slice stands alone. Ignore any earlier slice, page, or reply in this conversation, and use only the pages, text, and rules below.';
+
+function attemptPrompt(
+  target: Pick<DistillSlice, 'id' | 'title' | 'pageStart' | 'pageEnd'>,
+  text: string,
+  previous: Rejection | undefined,
+): string {
+  const skeleton = JSON.stringify(
+    {
+      schemaVersion: 1,
+      sectionId: target.id,
+      sectionTitle: target.title,
+      pageStart: target.pageStart,
+      pageEnd: target.pageEnd,
+      points: [],
+      code: [],
+    },
+    null,
+    2,
+  );
+  const specimen = JSON.stringify(
+    {
+      points: [
+        {
+          kind: 'must-remember',
+          title: 'placeholder title',
+          explanation: 'placeholder explanation',
+          page: target.pageStart,
+          example: { text: 'placeholder example', page: target.pageStart },
+        },
+      ],
+      code: [
+        {
+          title: 'placeholder title',
+          language: 'placeholder language',
+          page: target.pageStart,
+          source: 'placeholder source',
+          notes: [{ lines: 'placeholder lines', why: 'placeholder why' }],
+        },
+      ],
+    },
+    null,
+    2,
+  );
+  const prompt =
+    `${standsAlone}\n\n${instructions(target.pageStart, target.pageEnd)}\n\nFill in this JSON skeleton:\n\`\`\`json\n${skeleton}\n\`\`\`\n\n` +
+    `Field shape, not content to copy:\n\`\`\`json\n${specimen}\n\`\`\`\n\n${text}`;
+  if (!previous) {
+    return prompt;
+  }
+  const why = previous.detail ?? previous.failure;
+  if (why === 'bad point') {
+    return `${prompt}\n\nThe previous reply was rejected: bad point. ${pointFieldRule} Reply with only the board JSON.`;
+  }
+  if (why === 'bad code') {
+    return `${prompt}\n\nThe previous reply was rejected: bad code. ${codeFieldRule} Reply with only the board JSON.`;
+  }
+  return `${prompt}\n\nThe previous reply was rejected: ${why}. Reply with only the board JSON.`;
+}
+
+function judgeReply(
+  reply: AgentReply,
+  target: Pick<DistillSlice, 'pageStart' | 'pageEnd'>,
+): Outcome {
+  const text = reply.text;
+  if (reply.status === 'error') {
+    const detail = reply.errorMessage ?? 'agent run failed';
+    return { failure: 'network', detail, reply: text !== '' ? text : detail };
+  }
+  if (reply.status === 'cancelled') {
+    return { failure: 'cancelled', reply: text };
+  }
+  const interpreted = interpret(text);
+  if (!('board' in interpreted)) {
+    return { ...interpreted, reply: text };
+  }
+  const detail = shapeDetail(interpreted.board, target.pageStart, target.pageEnd);
+  if (detail !== undefined) {
+    return { failure: 'shape', detail, reply: text };
+  }
+  return { board: interpreted.board };
+}
+
+async function askAgent(
+  input: DistillInput,
+  slot: number,
+  target: Pick<DistillSlice, 'id' | 'title' | 'pageStart' | 'pageEnd'>,
+  read: { text: string; listings: string[] },
+  workspace: string,
+  beforeSecondAttempt: () => void,
+): Promise<Outcome> {
+  const ask = async (attempt: number, previous: Rejection | undefined): Promise<Outcome> => {
+    try {
+      const prompt = attemptPrompt(target, read.text, previous);
+      await writeFile(join(workspace, `attempt-${attempt}.md`), prompt, 'utf8');
+      if (!(await waitForReply())) {
+        return { failure: 'cancelled', reply: '' };
+      }
+      const images = await renderPageImages(input.pdfBytes, target.pageStart, target.pageEnd, workspace);
+      const reply = await nextReply(slot, input.modelId, input.modelParams, target.id, prompt, images);
+      await waitAfterReply();
+      if (cancelWasRequested()) {
+        return { failure: 'cancelled', reply: reply.text };
+      }
+      return judgeReply(reply, target);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { failure: 'network', detail, reply: detail };
+    }
+  };
+  let outcome = await ask(1, undefined);
+  if (!('board' in outcome) && outcome.failure !== 'cancelled') {
+    beforeSecondAttempt();
+    outcome = await ask(2, outcome);
+  }
+  if (!('board' in outcome)) {
+    await writeReject(input.folderPath, target.id, outcome);
+  }
+  return outcome;
 }
 
 export async function writeChecks(
@@ -670,6 +871,16 @@ export async function writeChecks(
   });
 }
 
+// The clear between slices: compact that slot's agent context once a slice is settled.
+// The fake reply file has no agent, and a cancelled queue does not wait on a summary.
+// Resolves true when the user cancelled the summary itself.
+async function settleSlice(slot: number): Promise<boolean> {
+  if (process.env.BOOK_DISTILLER_AGENT_FILE || cancelWasRequested()) {
+    return false;
+  }
+  return summarizeSlot(slot);
+}
+
 export async function distillQueue(
   input: DistillInput,
   onProgress: (slices: DistillSlice[]) => void,
@@ -677,7 +888,7 @@ export async function distillQueue(
   if (input.pdfBytes.byteLength === 0) {
     input = { ...input, pdfBytes: new Uint8Array(await readFile(input.pdfPath)) };
   }
-  cancelRequested = false;
+  beginSession();
   const slices: DistillSlice[] = input.slices.map((slice) => ({
     ...slice,
     status: slice.status ?? 'queued',
@@ -687,94 +898,100 @@ export async function distillQueue(
   };
   await mkdir(input.folderPath, { recursive: true });
   await writeManifest(input, slices);
-  for (const target of slices) {
-    if (!target.checked || target.status === 'done') {
-      continue;
-    }
-    const read = await readSlice(input.pdfBytes, target.pageStart, target.pageEnd);
-    const existing = await loadValidBoard(
-      input.folderPath,
-      target.id,
-      target.pageStart,
-      target.pageEnd,
-      read.listings,
-    );
-    if (existing) {
-      target.status = 'done';
-      target.board = existing;
-      await writeManifest(input, slices);
-      notify();
-      continue;
-    }
-    target.status = 'writing';
-    target.attempt = 1;
-    notify();
-    const workspace = await prepareWorkspace(target.id, read.text);
-    try {
-      const prompt = `${instructions()}\n\n${read.text}`;
-      const ask = async (): Promise<
-        { board: Board } | { failure: 'shape' | 'missing listing' | 'network' | 'cancelled' }
-      > => {
-        try {
-          if (!(await waitForReply())) {
-            return { failure: 'cancelled' };
-          }
-          const reply = await nextReply(input.modelId, target.id, workspace, prompt);
-          await waitAfterReply();
-          if (cancelRequested) {
-            return { failure: 'cancelled' };
-          }
-          const interpreted = interpret(reply);
-          if (!('board' in interpreted)) {
-            return interpreted;
-          }
-          if (shapeRejects(interpreted.board, target.pageStart, target.pageEnd)) {
-            return { failure: 'shape' };
-          }
-          if (!listingsMatch(interpreted.board, read.listings)) {
-            return { failure: 'missing listing' };
-          }
-          return interpreted;
-        } catch {
-          return { failure: 'network' };
-        }
-      };
-      let outcome = await ask();
-      if (!('board' in outcome) && outcome.failure !== 'cancelled') {
-        target.attempt = 2;
-        notify();
-        outcome = await ask();
+
+  const wanted = (slice: DistillSlice): boolean => slice.checked && slice.status !== 'done';
+  let cursor = 0;
+  // Synchronous, so two workers never take the same slice. Failed slices are claimed; done ones are not.
+  const claim = (): DistillSlice | undefined => {
+    while (cursor < slices.length) {
+      const next = slices[cursor];
+      cursor += 1;
+      if (next && wanted(next)) {
+        return next;
       }
-      if (!('board' in outcome)) {
-        target.status = 'failed';
-        delete target.attempt;
-        target.failureReason = outcome.failure;
+    }
+    return undefined;
+  };
+
+  // One worker owns one pool slot, and so one warm agent, for the whole queue.
+  const runWorker = async (slot: number): Promise<void> => {
+    for (;;) {
+      if (cancelWasRequested()) {
+        return;
+      }
+      const target = claim();
+      if (!target) {
+        return;
+      }
+      const existing = await loadValidBoard(input.folderPath, target.id, target.pageStart, target.pageEnd);
+      if (existing) {
+        target.status = 'done';
+        target.board = existing;
         await writeManifest(input, slices);
         notify();
-        if (outcome.failure === 'cancelled') {
-          break;
-        }
         continue;
       }
-      target.status = 'done';
-      delete target.attempt;
-      target.modelId = input.modelId;
-      target.board = outcome.board;
-      await writeAccepted(input, slices, target.id, outcome.board);
+      const read = await readSlice(input.pdfBytes, target.pageStart, target.pageEnd);
+      target.status = 'writing';
+      target.attempt = 1;
       notify();
-    } finally {
-      await releaseTemporaryWorkspace();
+      const workspace = await prepareWorkspace(slot, target.id, read.text, target.pageStart, target.pageEnd);
+      let stop = false;
+      try {
+        const outcome = await askAgent(input, slot, target, read, workspace.dir, () => {
+          target.attempt = 2;
+          notify();
+        });
+        if (!('board' in outcome)) {
+          target.status = 'failed';
+          delete target.attempt;
+          target.failureReason = outcome.failure;
+          if (outcome.detail) {
+            target.failureDetail = outcome.detail;
+          } else {
+            delete target.failureDetail;
+          }
+          await writeManifest(input, slices);
+          notify();
+          stop = outcome.failure === 'cancelled';
+        } else {
+          target.status = 'done';
+          delete target.attempt;
+          delete target.failureDetail;
+          target.modelId = input.modelId;
+          target.board = outcome.board;
+          await writeAccepted(input, slices, target.id, outcome.board);
+          notify();
+        }
+      } finally {
+        await workspace.release();
+        if (await settleSlice(slot)) {
+          stop = true;
+        }
+      }
+      if (stop) {
+        return;
+      }
+    }
+  };
+
+  const workers = Math.min(agentConcurrency(), slices.filter(wanted).length);
+  const settled = await Promise.allSettled(Array.from({ length: workers }, (_unused, slot) => runWorker(slot)));
+  for (const item of settled) {
+    if (item.status === 'rejected') {
+      throw item.reason;
     }
   }
   return { slices };
 }
 
 export type RedoResult =
-  | { status: 'kept'; failure?: 'shape' | 'missing listing' | 'network' | 'cancelled' }
+  | { status: 'kept'; failure?: Failure; failureDetail?: string }
   | { status: 'replaced'; slices: DistillSlice[] };
 
+// A redo is one slice on pool slot 0, then a summary of that slot.
 export async function redoSlice(input: DistillInput, sectionId: string): Promise<RedoResult> {
-  cancelRequested = false;
+  beginSession();
   if (input.pdfBytes.byteLength === 0) {
     input = { ...input, pdfBytes: new Uint8Array(await readFile(input.pdfPath)) };
   }
@@ -782,43 +999,17 @@ export async function redoSlice(input: DistillInput, sectionId: string): Promise
   if (!target) {
     return { status: 'kept' };
   }
+  const slot = 0;
   const read = await readSlice(input.pdfBytes, target.pageStart, target.pageEnd);
-  const workspace = await prepareWorkspace(target.id, read.text);
+  const workspace = await prepareWorkspace(slot, target.id, read.text, target.pageStart, target.pageEnd);
   try {
-    const prompt = `${instructions()}\n\n${read.text}`;
-    const ask = async (): Promise<
-      { board: Board } | { failure: 'shape' | 'missing listing' | 'network' | 'cancelled' }
-    > => {
-      try {
-        if (!(await waitForReply())) {
-          return { failure: 'cancelled' };
-        }
-        const reply = await nextReply(input.modelId, target.id, workspace, prompt);
-        await waitAfterReply();
-        if (cancelRequested) {
-          return { failure: 'cancelled' };
-        }
-        const interpreted = interpret(reply);
-        if (!('board' in interpreted)) {
-          return interpreted;
-        }
-        if (shapeRejects(interpreted.board, target.pageStart, target.pageEnd)) {
-          return { failure: 'shape' };
-        }
-        if (!listingsMatch(interpreted.board, read.listings)) {
-          return { failure: 'missing listing' };
-        }
-        return interpreted;
-      } catch {
-        return { failure: 'network' };
-      }
-    };
-    let outcome = await ask();
-    if (!('board' in outcome) && outcome.failure !== 'cancelled') {
-      outcome = await ask();
-    }
+    const outcome = await askAgent(input, slot, target, read, workspace.dir, () => undefined);
     if (!('board' in outcome)) {
-      return { status: 'kept', failure: outcome.failure };
+      return {
+        status: 'kept',
+        failure: outcome.failure,
+        ...(outcome.detail ? { failureDetail: outcome.detail } : {}),
+      };
     }
     const board = outcome.board;
     const opened = await openBook(input.folderPath);
@@ -843,6 +1034,7 @@ export async function redoSlice(input: DistillInput, sectionId: string): Promise
     await writeAccepted(input, slices, sectionId, board);
     return { status: 'replaced', slices };
   } finally {
-    await releaseTemporaryWorkspace();
+    await workspace.release();
+    await settleSlice(slot);
   }
 }

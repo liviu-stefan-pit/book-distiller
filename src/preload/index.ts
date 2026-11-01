@@ -3,6 +3,7 @@ import type { FolderChoice } from '../main/bookFolder';
 import type { SaveKeyResult, Session } from '../main/cursorKey';
 import type { DistillInput, DistillResult, DistillSlice, OpenBookResult, RedoResult } from '../main/distill';
 import type { PdfDecision } from '../main/inspectPdf';
+import type { ModelParameterValue, ModelSelection } from '../modelSelection';
 import type { Slice } from '../main/slicePdf';
 
 contextBridge.exposeInMainWorld('bookDistiller', {
@@ -23,7 +24,8 @@ contextBridge.exposeInMainWorld('bookDistiller', {
   saveKey: (apiKey: string): Promise<SaveKeyResult> => ipcRenderer.invoke('save-key', apiKey),
   forgetKey: (): Promise<void> => ipcRenderer.invoke('forget-key'),
   session: (): Promise<Session> => ipcRenderer.invoke('session'),
-  chooseModel: (modelId: string): Promise<void> => ipcRenderer.invoke('choose-model', modelId),
+  chooseModel: (modelId: string, modelParams: ModelParameterValue[]): Promise<ModelSelection> =>
+    ipcRenderer.invoke('choose-model', modelId, modelParams),
   openBook: (folderPath: string): Promise<OpenBookResult> => ipcRenderer.invoke('open-book', folderPath),
   setChecks: (folderPath: string, checks: Array<{ id: string; checked: boolean }>): Promise<void> =>
     ipcRenderer.invoke('set-checks', folderPath, checks),
@@ -47,6 +49,15 @@ contextBridge.exposeInMainWorld('bookDistiller', {
     ipcRenderer.on('window-maximized', wrapped);
     return () => {
       ipcRenderer.removeListener('window-maximized', wrapped);
+    };
+  },
+  onTokenTotal: (listener: (total: number | null) => void): (() => void) => {
+    const wrapped = (_event: unknown, total: number | null): void => {
+      listener(total);
+    };
+    ipcRenderer.on('token-total', wrapped);
+    return () => {
+      ipcRenderer.removeListener('token-total', wrapped);
     };
   },
   onDistillProgress: (listener: (slices: DistillSlice[]) => void): (() => void) => {

@@ -108,6 +108,14 @@ test('every page through the last slice end is covered once', async () => {
   expect(covered).toEqual(Array.from({ length: max }, () => 1));
 });
 
+test('pages 47 through 49 do not require wrapped URL tails', async () => {
+  const bytes = await loadBytes();
+  const listings = (await requiredListings(bytes, 47, 49)).map((line) => line.trim());
+  console.log(JSON.stringify(listings));
+  expect(listings).not.toContain('dotnet/core/dotnet-five');
+  expect(listings).not.toContain('standard/blob/master/docs/versions.md');
+});
+
 test('page 3 and page 34 listings omit the running header', async () => {
   const bytes = await loadBytes();
   const page3 = (await requiredListings(bytes, 3, 3)).map((line) => line.trim());

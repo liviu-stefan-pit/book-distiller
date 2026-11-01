@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { chooseExistingBook, chooseOutputFolder, resolveBookFolder } from './bookFolder';
 import { forgetCursorKey, loadSession, rememberFolder, rememberModel, saveCursorKey } from './cursorKey';
 import { distillQueue, openBook, redoSlice, requestCancel, writeChecks, type DistillInput } from './distill';
+import { disposeAgent, hasHeldState, onTokenTotal } from './heldAgent';
 import { inspectPdf } from './inspectPdf';
+import type { ModelParameterValue } from '../modelSelection';
 import { slicePdf } from './slicePdf';
 
 const userData = process.env.BOOK_DISTILLER_USER_DATA;
@@ -15,7 +17,7 @@ function createWindow(): void {
   const window = new BrowserWindow({
     width: 960,
     height: 720,
-    backgroundColor: '#09090b',
+    backgroundColor: '#131314',
     roundedCorners: true,
     frame: false,
     thickFrame: true,
@@ -39,6 +41,11 @@ function createWindow(): void {
 }
 
 void app.whenReady().then(() => {
+  onTokenTotal((total) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('token-total', total);
+    }
+  });
   ipcMain.handle('inspect-pdf', (_event, data: Uint8Array, fileName: string) => inspectPdf(data, fileName));
   ipcMain.handle('slice-pdf', (_event, data: Uint8Array) => slicePdf(data));
   ipcMain.handle('choose-folder', async () => {
@@ -54,10 +61,21 @@ void app.whenReady().then(() => {
   ipcMain.handle('resolve-book-folder', (_event, outputPath: string, pdfPath: string, title: string) =>
     resolveBookFolder(outputPath, pdfPath, title),
   );
-  ipcMain.handle('save-key', (_event, apiKey: string) => saveCursorKey(apiKey));
-  ipcMain.handle('forget-key', () => forgetCursorKey());
+  ipcMain.handle('save-key', async (_event, apiKey: string) => {
+    const result = await saveCursorKey(apiKey);
+    if (result.status === 'saved') {
+      await disposeAgent('key');
+    }
+    return result;
+  });
+  ipcMain.handle('forget-key', async () => {
+    await forgetCursorKey();
+    await disposeAgent('key');
+  });
   ipcMain.handle('session', () => loadSession());
-  ipcMain.handle('choose-model', (_event, modelId: string) => rememberModel(modelId));
+  ipcMain.handle('choose-model', (_event, modelId: string, modelParams: ModelParameterValue[]) =>
+    rememberModel(modelId, modelParams),
+  );
   ipcMain.handle('open-book', (_event, folderPath: string) => openBook(folderPath));
   ipcMain.handle(
     'set-checks',
@@ -70,9 +88,7 @@ void app.whenReady().then(() => {
       event.sender.send('distill-progress', slices);
     }),
   );
-  ipcMain.handle('cancel-distill', () => {
-    requestCancel();
-  });
+  ipcMain.handle('cancel-distill', () => requestCancel());
   ipcMain.on('window-minimize', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
   });
@@ -95,4 +111,19 @@ void app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   app.quit();
+});
+
+let quitDisposed = false;
+
+app.on('before-quit', (event) => {
+  if (quitDisposed || !hasHeldState()) {
+    return;
+  }
+  event.preventDefault();
+  quitDisposed = true;
+  const settled = Promise.race([
+    disposeAgent('quit'),
+    new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+  ]);
+  void settled.finally(() => app.quit());
 });

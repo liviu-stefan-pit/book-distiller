@@ -2,6 +2,7 @@ import type { FolderChoice } from '../main/bookFolder';
 import type { SaveKeyResult, Session } from '../main/cursorKey';
 import type { DistillInput, DistillResult, DistillSlice, OpenBookResult, RedoResult } from '../main/distill';
 import type { PdfDecision } from '../main/inspectPdf';
+import type { ModelParameterValue, ModelSelection } from '../modelSelection';
 import type { Slice } from '../main/slicePdf';
 
 export interface BookDistillerApi {
@@ -14,7 +15,7 @@ export interface BookDistillerApi {
   saveKey: (apiKey: string) => Promise<SaveKeyResult>;
   forgetKey: () => Promise<void>;
   session: () => Promise<Session>;
-  chooseModel: (modelId: string) => Promise<void>;
+  chooseModel: (modelId: string, modelParams: ModelParameterValue[]) => Promise<ModelSelection>;
   openBook: (folderPath: string) => Promise<OpenBookResult>;
   setChecks: (folderPath: string, checks: Array<{ id: string; checked: boolean }>) => Promise<void>;
   distill: (input: DistillInput) => Promise<DistillResult>;
@@ -24,6 +25,7 @@ export interface BookDistillerApi {
   toggleMaximizeWindow: () => void;
   closeWindow: () => void;
   onMaximized: (listener: (maximized: boolean) => void) => () => void;
+  onTokenTotal: (listener: (total: number | null) => void) => () => void;
   onDistillProgress: (listener: (slices: DistillSlice[]) => void) => () => void;
 }
 

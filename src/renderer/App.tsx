@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
 import type { Board, DistillSlice } from '../main/distill';
 import type { PdfDecision } from '../main/inspectPdf';
 import type { Slice } from '../main/slicePdf';
+import {
+  defaultParams,
+  isFlagParameter,
+  resolveSelection,
+  type CatalogModel,
+  type ModelParameterValue,
+} from '../modelSelection';
+import { highlightSource, notedLineNumbers, type Token } from './highlight';
 
 function pageRange(start: number, end: number): string {
   if (start === end) {
@@ -31,68 +39,156 @@ function unfinishedLine(done: number, failed: number, left: number): string {
   return parts.join(' \u00b7 ');
 }
 
-const pointKinds = [
-  ['must-remember', 'Must remember'],
-  ['mechanics', 'Mechanics'],
-  ['useful-later', 'Useful later'],
-] as const;
+function proseParagraphs(text: string): string[] {
+  return text
+    .replaceAll('\r\n', '\n')
+    .replaceAll('\r', '\n')
+    .split(/\n[ \t]*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0);
+}
+
+function inlineNodes(text: string): ReactNode {
+  if (!text.includes('`')) {
+    return text;
+  }
+  const nodes: ReactNode[] = [];
+  const pattern = /`([^`]+)`/g;
+  let last = 0;
+  let index = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index;
+    if (start > last) {
+      nodes.push(text.slice(last, start));
+    }
+    nodes.push(<code key={index} className="inline-code">{match[1]}</code>);
+    index += 1;
+    last = start + match[0].length;
+  }
+  if (last < text.length) {
+    nodes.push(text.slice(last));
+  }
+  return nodes.length > 0 ? nodes : text;
+}
+
+function Prose({ text }: { text: string }) {
+  return proseParagraphs(text).map((paragraph, index) => <p key={index}>{inlineNodes(paragraph)}</p>);
+}
+
+function PageChip({ page, onPage }: { page: number; onPage: (page: number) => void }) {
+  return (
+    <button type="button" className="page-chip" onClick={() => onPage(page)}>{`Page ${page}`}</button>
+  );
+}
+
+function PointArticle({
+  point,
+  onPage,
+}: {
+  point: Board['points'][number];
+  onPage: (page: number) => void;
+}) {
+  const example = point.example;
+  return (
+    <article>
+      <h3>{point.title}</h3>
+      <Prose text={point.explanation} />
+      <PageChip page={point.page} onPage={onPage} />
+      {example ? (
+        <aside className="example">
+          <Prose text={example.text} />
+          <PageChip page={example.page} onPage={onPage} />
+        </aside>
+      ) : null}
+    </article>
+  );
+}
+
+function SourceLine({ tokens, noted }: { tokens: Token[]; noted: boolean }) {
+  const className = noted ? 'line is-noted' : 'line';
+  return (
+    <span className={className}>{tokens.map((token, index) => (
+      <span key={index} className={`tok-${token.kind}`}>{token.text}</span>
+    ))}</span>
+  );
+}
+
+function CodeListing({
+  block,
+  onPage,
+}: {
+  block: Board['code'][number];
+  onPage: (page: number) => void;
+}) {
+  const lines = highlightSource(block.source, block.language);
+  const noted = notedLineNumbers(block.notes);
+  return (
+    <article className="listing">
+      <h3>{block.title}</h3>
+      <div className="listing-meta">
+        <span className="language">{block.language}</span>
+        <PageChip page={block.page} onPage={onPage} />
+      </div>
+      <pre><code>{lines.map((tokens, index) => (
+        <SourceLine key={index} tokens={tokens} noted={noted.has(index + 1)} />
+      ))}</code></pre>
+      {block.notes.length > 0 ? (
+        <ul className="notes">
+          {block.notes.map((note, index) => (
+            <li key={`${note.lines}-${index}`}>{`${note.lines} \u2014 ${note.why}`}</li>
+          ))}
+        </ul>
+      ) : null}
+    </article>
+  );
+}
 
 function BoardView({ board, onPage }: { board: Board; onPage: (page: number) => void }) {
   if (board.points.length === 0 && board.code.length === 0) {
     return <p>Those pages had no technical content.</p>;
   }
+  const remembered = board.points.filter((point) => point.kind === 'must-remember');
+  const mechanics = board.points.filter((point) => point.kind === 'mechanics');
+  const later = board.points.filter((point) => point.kind === 'useful-later');
   return (
-    <>
-      {pointKinds.map(([kind, heading]) => (
-        <section key={kind}>
-          <h2>{heading}</h2>
-          {board.points
-            .filter((point) => point.kind === kind)
-            .map((point) => {
-              const example = point.example;
-              return (
-                <article key={`${point.kind}-${point.title}-${point.page}`}>
-                  <h3>{point.title}</h3>
-                  <p>{point.explanation}</p>
-                  <p>
-                    <button type="button" onClick={() => onPage(point.page)}>
-                      Page {point.page}
-                    </button>
-                  </p>
-                  {example ? (
-                    <p>
-                      {example.text}{' '}
-                      <button type="button" onClick={() => onPage(example.page)}>
-                        Page {example.page}
-                      </button>
-                    </p>
-                  ) : null}
-                </article>
-              );
-            })}
+    <div className="board" key={board.sectionId}>
+      <div className="masthead">
+        <h2>{board.sectionTitle}</h2>
+        <p className="pages">{pageRange(board.pageStart, board.pageEnd)}</p>
+      </div>
+      {remembered.length > 0 ? (
+        <section className="summary" aria-label="Must remember">
+          <p className="eyebrow">Must remember</p>
+          {remembered.map((point, index) => (
+            <PointArticle key={`${point.kind}-${point.title}-${point.page}-${index}`} point={point} onPage={onPage} />
+          ))}
         </section>
-      ))}
-      <section>
-        <h2>Code</h2>
-        {board.code.map((block) => (
-          <article key={`${block.title}-${block.page}`}>
-            <h3>{block.title}</h3>
-            <p className="caption">{block.language}</p>
-            <p>
-              <button type="button" onClick={() => onPage(block.page)}>
-                Page {block.page}
-              </button>
-            </p>
-            <pre>{block.source}</pre>
-            {block.notes.map((note) => (
-              <p key={`${note.lines}-${note.why}`}>
-                {note.lines} {note.why}
-              </p>
-            ))}
-          </article>
-        ))}
-      </section>
-    </>
+      ) : null}
+      {mechanics.length > 0 ? (
+        <section className="mechanics">
+          <h2>Mechanics</h2>
+          {mechanics.map((point, index) => (
+            <PointArticle key={`${point.kind}-${point.title}-${point.page}-${index}`} point={point} onPage={onPage} />
+          ))}
+        </section>
+      ) : null}
+      {later.length > 0 ? (
+        <details className="later">
+          <summary><span>Useful later</span><span className="count">{later.length}</span></summary>
+          {later.map((point, index) => (
+            <PointArticle key={`${point.kind}-${point.title}-${point.page}-${index}`} point={point} onPage={onPage} />
+          ))}
+        </details>
+      ) : null}
+      {board.code.length > 0 ? (
+        <section className="code">
+          <h2>Code</h2>
+          {board.code.map((block, index) => (
+            <CodeListing key={`${block.title}-${block.page}-${index}`} block={block} onPage={onPage} />
+          ))}
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -191,8 +287,9 @@ export function App() {
   const [openMessage, setOpenMessage] = useState('');
   const [draftKey, setDraftKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
-  const [modelIds, setModelIds] = useState<string[]>([]);
+  const [models, setModels] = useState<CatalogModel[]>([]);
   const [modelId, setModelId] = useState('');
+  const [modelParams, setModelParams] = useState<ModelParameterValue[]>([]);
   const [keyMessage, setKeyMessage] = useState('');
   const [replacing, setReplacing] = useState(false);
   const [bookTitle, setBookTitle] = useState('');
@@ -207,6 +304,8 @@ export function App() {
   const [dragOver, setDragOver] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const [tokenTotal, setTokenTotal] = useState<number | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const keyLocked = useRef(false);
   const folderChosen = useRef(false);
   const picked = useRef(false);
@@ -216,6 +315,16 @@ export function App() {
   useEffect(() => {
     return window.bookDistiller.onMaximized(setMaximized);
   }, []);
+
+  useEffect(() => {
+    return window.bookDistiller.onTokenTotal(setTokenTotal);
+  }, []);
+
+  useEffect(() => {
+    if (!queueRunning) {
+      setCancelling(false);
+    }
+  }, [queueRunning]);
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -245,8 +354,9 @@ export function App() {
         }
         if (!keyLocked.current) {
           setHasKey(session.hasKey);
-          setModelIds(session.modelIds);
+          setModels(session.models);
           setModelId(session.modelId);
+          setModelParams(session.modelParams);
         }
         if (!folderChosen.current) {
           setFolderPath(session.folderPath);
@@ -327,8 +437,9 @@ export function App() {
     setDraftKey('');
     setHasKey(true);
     setReplacing(false);
-    setModelIds(result.modelIds);
-    setModelId((current) => (result.modelIds.includes(current) ? current : ''));
+    setModels(result.models);
+    setModelId(result.modelId);
+    setModelParams(result.modelParams);
     setKeyMessage('');
   }
 
@@ -345,8 +456,9 @@ export function App() {
     setDraftKey('');
     setHasKey(false);
     setReplacing(false);
-    setModelIds([]);
+    setModels([]);
     setModelId('');
+    setModelParams([]);
     setKeyMessage('');
   }
 
@@ -463,6 +575,7 @@ export function App() {
         pdfPath,
         title: decision.title,
         modelId,
+        modelParams,
         pdfBytes,
         slices,
       });
@@ -494,6 +607,7 @@ export function App() {
         pdfPath,
         title,
         modelId,
+        modelParams,
         pdfBytes: pdfBytes ?? new Uint8Array(),
         slices: study.map((slice) => ({
           id: slice.id,
@@ -504,6 +618,7 @@ export function App() {
           status: slice.status,
           modelId: slice.modelId,
           failureReason: slice.failureReason,
+          failureDetail: slice.failureDetail,
           board: slice.board,
         })),
       });
@@ -537,6 +652,7 @@ export function App() {
           pdfPath,
           title,
           modelId,
+          modelParams,
           pdfBytes: pdfBytes ?? new Uint8Array(),
           slices: study.map((slice) => ({
             id: slice.id,
@@ -554,7 +670,7 @@ export function App() {
         return;
       }
       if (result.failure) {
-        setRedoFailure(result.failure);
+        setRedoFailure(result.failureDetail ? `${result.failure}: ${result.failureDetail}` : result.failure);
       }
     } finally {
       setQueueRunning(false);
@@ -585,6 +701,8 @@ export function App() {
   }
 
   const confirmEnabled = slices.some((slice) => slice.checked);
+  const chosenModel = models.find((model) => model.id === modelId);
+  const resolvedParams = chosenModel ? resolveSelection(models, modelId, modelParams).modelParams : [];
   const startEnabled = decision?.accepted === true && hasKey && modelId !== '' && folderPath !== '';
   const canContinue = study.some(
     (slice) => slice.checked && (slice.status === 'failed' || slice.status === 'queued'),
@@ -597,11 +715,15 @@ export function App() {
   const leftCount = checkedSlices.filter(
     (slice) => slice.status === 'queued' || slice.status === 'writing',
   ).length;
-  const writingSlice = study.find((slice) => slice.status === 'writing');
+  const writingSlices = study.filter((slice) => slice.status === 'writing');
+  const writingSlice = writingSlices[0];
+  // One writing slice is named. Several are counted, never named by the first one alone.
+  const writingStatus =
+    writingSlices.length > 1 ? `Writing ${writingSlices.length} slices` : writingSlice ? writingLine(writingSlice) : '';
   const redoing = queueKind === 'redo' && openSlice !== undefined;
   const showRun = checkedSlices.length > 0 && (queueRunning || failedCount > 0 || leftCount > 0);
   const runLine = writingSlice
-    ? writingLine(writingSlice)
+    ? writingStatus
     : redoing && openSlice
       ? `Writing ${openSlice.title} again`
       : unfinishedLine(doneCount, failedCount, leftCount);
@@ -618,8 +740,15 @@ export function App() {
       <header className="topbar">
         <h1>{heading}</h1>
         {screen === 'study' && queueRunning ? (
-          <button type="button" onClick={() => void window.bookDistiller.cancelDistill()}>
-            Cancel
+          <button
+            type="button"
+            disabled={cancelling}
+            onClick={() => {
+              setCancelling(true);
+              void window.bookDistiller.cancelDistill();
+            }}
+          >
+            {cancelling ? 'Cancelling' : 'Cancel'}
           </button>
         ) : null}
         {screen === 'study' && !queueRunning && canContinue ? (
@@ -633,6 +762,9 @@ export function App() {
           </button>
         ) : null}
         {screen === 'study' && redoFailure !== '' ? <span>{redoFailure}</span> : null}
+        {tokenTotal !== null ? (
+          <span className="token-total">{`${tokenTotal.toLocaleString('en-US')} tokens`}</span>
+        ) : null}
         <button
           type="button"
           className="settings-button"
@@ -697,26 +829,68 @@ export function App() {
                 Forget key
               </button>
             ) : null}
-            {modelIds.length > 0 ? (
-              <label>
-                Model
-                <select
-                  value={modelId}
-                  onChange={(event) => {
+            {models.length > 0 ? (
+              <>
+                <label>
+                  Model
+                  <select
+                    value={modelId}
+                    onChange={(event) => {
+                      keyLocked.current = true;
+                      const next = event.target.value;
+                      const model = models.find((item) => item.id === next);
+                      const params = model ? defaultParams(model) : [];
+                      setModelId(next);
+                      setModelParams(params);
+                      void window.bookDistiller.chooseModel(next, params);
+                    }}
+                  >
+                    <option value=""></option>
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {chosenModel?.parameters.map((parameter) => {
+                  const current = resolvedParams.find((item) => item.id === parameter.id)?.value ?? '';
+                  const change = (value: string): void => {
                     keyLocked.current = true;
-                    const next = event.target.value;
-                    setModelId(next);
-                    void window.bookDistiller.chooseModel(next);
-                  }}
-                >
-                  <option value=""></option>
-                  {modelIds.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                    const next = resolveSelection(
+                      models,
+                      modelId,
+                      resolvedParams.map((item) => (item.id === parameter.id ? { id: item.id, value } : item)),
+                    );
+                    setModelParams(next.modelParams);
+                    void window.bookDistiller.chooseModel(next.modelId, next.modelParams);
+                  };
+                  if (isFlagParameter(parameter)) {
+                    return (
+                      <label key={parameter.id} className="flag">
+                        <input
+                          type="checkbox"
+                          checked={current === 'true'}
+                          onChange={(event) => change(event.target.checked ? 'true' : 'false')}
+                        />
+                        {parameter.displayName ?? 'Fast'}
+                      </label>
+                    );
+                  }
+                  return (
+                    <label key={parameter.id}>
+                      {parameter.displayName ?? parameter.id}
+                      <select value={current} onChange={(event) => change(event.target.value)}>
+                        {parameter.values.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.displayName ?? option.value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
+              </>
             ) : null}
             {keyMessage !== '' ? <p className="notice">{keyMessage}</p> : null}
           </div>
@@ -825,7 +999,10 @@ export function App() {
                       {slice.status === 'writing' ? <span className="status">writing</span> : null}
                       {slice.status === 'done' ? <span className="status done">done</span> : null}
                       {slice.status === 'failed' ? (
-                        <span className="status failed">failed {slice.failureReason}</span>
+                        <span className="status failed">
+                          failed {slice.failureReason}
+                          {slice.failureDetail ? `: ${slice.failureDetail}` : ''}
+                        </span>
                       ) : null}
                     </div>
                   </li>
@@ -847,8 +1024,12 @@ export function App() {
                 />
               ) : writingSlice ? (
                 <div className="waiting">
-                  <p>{writingLine(writingSlice)}</p>
-                  <p>The board opens here when this section is ready.</p>
+                  <p>{writingStatus}</p>
+                  <p>
+                    {writingSlices.length > 1
+                      ? 'A board opens here when its section is ready.'
+                      : 'The board opens here when this section is ready.'}
+                  </p>
                 </div>
               ) : null}
             </div>

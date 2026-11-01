@@ -45,6 +45,8 @@ async function launchApp(
       BOOK_DISTILLER_VAULT: 'memory',
       BOOK_DISTILLER_USER_DATA: userData,
       BOOK_DISTILLER_CATALOG_FILE: catalogFile,
+      // Tests that script one reply order or watch one writing slice need a single worker.
+      BOOK_DISTILLER_AGENT_CONCURRENCY: '1',
       ...extraEnv,
     },
   });

@@ -46,8 +46,12 @@ export async function readSlice(
     const pages: string[] = [];
     const listings: string[] = [];
     let run: string[] = [];
+    let lastProse = '';
     const flush = (): void => {
-      if (run.length === 1 && ignorableListing(run[0])) {
+      if (
+        run.length === 1 &&
+        (ignorableListing(run[0]) || (!/\s/.test(run[0]) && /https?:\/\//i.test(lastProse)))
+      ) {
         run = [];
         return;
       }
@@ -97,6 +101,7 @@ export async function readSlice(
           run.push(line.text.trim());
         } else {
           flush();
+          lastProse = line.text;
         }
       }
       pages.push(`--- PAGE ${pageNumber} ---\n${pageLines.join('\n')}`);
